@@ -38,7 +38,21 @@ Files created, grouped by task:
 ## Task 1: Project scaffolding
 
 **Files:**
-- Create: `pyproject.toml`, `.gitignore`, `src/__init__.py`, `src/agents/__init__.py`, `src/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
+- Create: `.mise.toml`, `pyproject.toml`, `.gitignore`, `src/__init__.py`, `src/agents/__init__.py`, `src/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
+
+- [ ] **Step 0: Create `.mise.toml`**
+
+```toml
+[tools]
+python = "3.11"
+uv = "latest"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+```
+
+Run: `mise install`
+Expected: Python 3.11 and uv installed into the mise-managed toolchain.
 
 - [ ] **Step 1: Create `pyproject.toml`**
 
@@ -147,22 +161,22 @@ focuses:
   - ethics
 ```
 
-- [ ] **Step 6: Install dev deps and verify**
+- [ ] **Step 6: Install deps and verify**
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install -e ".[dev]"
-pytest --collect-only
+uv sync --extra dev
+uv run pytest --collect-only
 ```
 
-Expected: "collected 0 items" (no tests yet, no errors).
+Expected: `.venv` created, `uv.lock` generated, `pytest --collect-only` reports "collected 0 items" (no tests yet, no errors).
+
+**Convention for all subsequent tasks:** run `pytest` and `python` either via `uv run <cmd>` or by activating the venv first (`. .venv/bin/activate`). The plan writes bare commands for brevity.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add pyproject.toml .gitignore src/ tests/ scripts/ config/
-git commit -m "Scaffold project layout, config, and deps"
+git add .mise.toml pyproject.toml uv.lock .gitignore src/ tests/ scripts/ config/
+git commit -m "Scaffold project layout, mise/uv toolchain, config, and deps"
 ```
 
 ---
@@ -2399,15 +2413,14 @@ Agentic Python system: takes a markdown research manuscript, produces a markdown
 ## Quick start
 
 ```bash
-# Prereqs: Python 3.11+
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+# Prereqs: mise (https://mise.jdx.dev/) — installs everything else.
+mise install          # Python 3.11 + uv from .mise.toml
+uv sync --extra dev   # creates .venv and installs deps + dev extras
 
-# Set BASE_URL in .env (already provided for the course)
-cp .env .env.local    # or edit .env directly
+# BASE_URL for the course proxy is already in .env
 
 # Run it
-python -m src.main path/to/manuscript.md --output report.md
+uv run python -m src.main path/to/manuscript.md --output report.md
 ```
 
 Add `-n 5` to use 5 reviewers, `--config path/to/your.yaml` to override the config.
@@ -2439,7 +2452,7 @@ The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No 
 ## Evaluation
 
 ```bash
-python scripts/judge.py --manuscript samples/paper.md --reviews-dir reviews --output evaluations/run.json
+uv run python scripts/judge.py --manuscript samples/paper.md --reviews-dir reviews --output evaluations/run.json
 ```
 
 Scores each reviewer's feedback on a 5-dimension Likert rubric: specificity, actionability, persona-fidelity, coverage, non-redundancy. Uses a different model from reviewers by default to reduce self-preference bias.
@@ -2447,8 +2460,8 @@ Scores each reviewer's feedback on a 5-dimension Likert rubric: specificity, act
 ## Tests
 
 ```bash
-pytest                  # fast tests only (default)
-pytest -m slow          # live-proxy acceptance test (costs cents per run)
+uv run pytest                  # fast tests only (default)
+uv run pytest -m slow          # live-proxy acceptance test (costs cents per run)
 ```
 ```
 
@@ -2476,7 +2489,7 @@ Expected: live-proxy acceptance test passes.
 - [ ] **Step 3: Run the system on a real sample and inspect the report**
 
 ```bash
-python -m src.main tests/fixtures/tiny_manuscript.md --output /tmp/report.md
+uv run python -m src.main tests/fixtures/tiny_manuscript.md --output /tmp/report.md
 cat /tmp/report.md
 ```
 
@@ -2485,7 +2498,7 @@ Expected: sensible markdown report with 3 reviewer sections, one each covering m
 - [ ] **Step 4: Run the judge against the same output**
 
 ```bash
-python scripts/judge.py --manuscript tests/fixtures/tiny_manuscript.md \
+uv run python scripts/judge.py --manuscript tests/fixtures/tiny_manuscript.md \
     --reviews-dir reviews --output /tmp/judge.json
 cat /tmp/judge.json
 ```

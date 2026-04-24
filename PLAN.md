@@ -40,10 +40,15 @@ OpenRouter via the AWS proxy (`BASE_URL` in `.env`). OpenAI chat completions for
 
 Framework: bare `openai` Python SDK with `base_url` pointed at the proxy, plus a thin homegrown orchestrator — keeps model choice free across all three recommended options.
 
+## Development environment
+
+- **Python version:** 3.11, pinned via [mise](https://mise.jdx.dev/).
+- **Packages + virtualenv:** [uv](https://docs.astral.sh/uv/) (`uv sync` creates `.venv` and installs deps + dev extras; `uv.lock` committed).
+- **Bootstrap:** `mise install && uv sync`. mise also installs uv, so one tool bootstraps the rest.
+
 ## Unresolved questions
 
 - Source of ACM CCS tree (scrape `dl.acm.org/ccs` vs existing dump)?
 - Sample papers for eval (which, how many)?
 - CLI invocation form and flags?
-- Python version pin?
 - Judge rubric weighting (equal vs weighted)?

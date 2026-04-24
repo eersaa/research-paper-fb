@@ -220,7 +220,7 @@ Report per-run token totals and USD cost (proxy returns `usage.cost`) at end of 
 ## 11. Project structure
 
 ```
-research-paper-fb-2/
+research-paper-fb/
 ├── src/
 │   ├── agents/
 │   │   ├── classification.py
@@ -257,6 +257,13 @@ research-paper-fb-2/
 └── pyproject.toml
 ```
 
+## 11a. Development environment
+
+- **Python version:** pinned to 3.11 via [mise](https://mise.jdx.dev/) using a `.mise.toml` at repo root.
+- **Package + virtualenv manager:** [uv](https://docs.astral.sh/uv/). `uv sync` creates `.venv` and installs all runtime + dev deps from `pyproject.toml`. `uv.lock` committed for reproducible installs.
+- **Bootstrap (fresh clone):** `mise install && uv sync`. mise installs both the pinned Python and uv itself, so no prior tooling beyond mise is required on the host.
+- **Running commands:** `uv run pytest`, `uv run python -m src.main ...` — or activate `.venv` manually. mise can also expose `pytest`/`python` directly when `_.python.venv` is configured.
+
 ## 12. Testing strategy
 
 - **Unit:** sampler (diversity guarantee), `lookup_acm` (deterministic), renderer (pure function), config loader.
@@ -279,5 +286,4 @@ research-paper-fb-2/
 - Source of ACM CCS tree — scrape from `dl.acm.org/ccs` or locate an existing structured dump?
 - Sample paper set for eval — which arXiv papers, how many?
 - CLI UX — invocation form and flags?
-- Python version pin (3.11, 3.12)?
 - Judge rubric — equal weighting of dimensions, or weighted aggregate?
