@@ -228,18 +228,28 @@ research-paper-fb/
 ├── paperfb/
 │   ├── __main__.py                 # enables `python -m paperfb <manuscript.md>`
 │   ├── main.py                     # CLI entry point
-│   ├── agents/
-│   │   ├── classification.py
-│   │   ├── profile_creation.py
-│   │   ├── profile_sampler.py
-│   │   └── reviewer.py
-│   ├── tools/
-│   │   ├── lookup_acm.py
-│   │   └── write_review.py
-│   ├── orchestrator.py             # sequential + asyncio.gather fan-out
-│   ├── renderer.py
+│   ├── contracts.py                # shared cross-agent types (ReviewerTuple, ReviewerProfile, ClassificationResult). ONLY cross-agent import surface.
+│   ├── config.py
 │   ├── llm_client.py               # openai SDK wrapper, base_url = proxy
-│   └── config.py
+│   ├── logging.py                  # run-scoped JSONL logger used by LLM client and tools
+│   ├── orchestrator.py             # sequential + asyncio.gather fan-out; imports only agent __init__ + contracts
+│   ├── renderer.py                 # pure function, JSONs → markdown
+│   └── agents/
+│       ├── classification/
+│       │   ├── __init__.py         # public API: classify(manuscript, cfg, llm) -> ClassificationResult
+│       │   ├── agent.py            # LLM + tool loop (private)
+│       │   ├── prompts.py          # system prompt (private)
+│       │   └── tools.py            # lookup_acm — agent-private tool (private)
+│       ├── profile_creation/
+│       │   ├── __init__.py         # public API: create_profiles(classes, cfg, llm) -> list[ReviewerProfile]
+│       │   ├── sampler.py          # deterministic tuple sampler (private)
+│       │   ├── agent.py            # LLM persona generation (private)
+│       │   └── prompts.py
+│       └── reviewer/
+│           ├── __init__.py         # public API: review(profile, manuscript, cfg, llm) -> Path
+│           ├── agent.py            # LLM + tool loop (private)
+│           ├── prompts.py
+│           └── tools.py            # write_review — agent-private tool (private)
 ├── scripts/
 │   ├── build_acm_ccs.py
 │   └── judge.py
@@ -249,10 +259,22 @@ research-paper-fb/
 ├── data/
 │   └── acm_ccs.json
 ├── tests/
-│   ├── test_sampler.py
-│   ├── test_renderer.py
-│   ├── test_lookup_acm.py
+│   ├── agents/
+│   │   ├── classification/
+│   │   │   ├── test_agent.py
+│   │   │   └── test_tools.py
+│   │   ├── profile_creation/
+│   │   │   ├── test_sampler.py
+│   │   │   └── test_agent.py
+│   │   └── reviewer/
+│   │       ├── test_agent.py
+│   │       └── test_tools.py
+│   ├── test_contracts.py
+│   ├── test_config.py
+│   ├── test_llm_client.py
 │   ├── test_orchestrator.py
+│   ├── test_renderer.py
+│   ├── test_build_acm_ccs.py
 │   ├── test_judge.py
 │   └── test_acceptance_live.py     # @pytest.mark.slow
 ├── samples/                        # arXiv papers for eval
@@ -263,6 +285,27 @@ research-paper-fb/
 ├── README.md
 └── pyproject.toml
 ```
+
+## 10a. Decoupling and agent boundaries
+
+Each agent is a **self-contained subpackage** under `paperfb/agents/` with a single public function exposed via `__init__.py`. Everything else (prompts, tools, implementation) is package-private.
+
+**Invariants the code must preserve:**
+
+- An agent subpackage may import from: its own submodules, `paperfb.contracts`, `paperfb.config`, `paperfb.llm_client`, stdlib, and third-party.
+- An agent subpackage must NOT import from another agent subpackage. All inter-agent communication is via types in `paperfb.contracts`.
+- Only `orchestrator.py` imports multiple agents. It imports each via its public API (`from paperfb.agents.classification import classify`) and wires them together.
+- Public function shape is `def <verb>(required_input, cfg: Config, llm: LLMClient) -> OutputType`. Dependencies are explicit function parameters; agents are stateless.
+- Tools live with the agent that uses them (e.g. `lookup_acm` under `agents/classification/tools.py`). They are not shared.
+
+**Shared contracts (`paperfb/contracts.py`):**
+
+- `ClassificationResult` — output of Classification Agent
+- `ReviewerTuple` — output of Profile Creation sampler
+- `ReviewerProfile` — output of Profile Creation Agent, input to Reviewer Agent
+- The Review JSON schema (reviewer output) is documented in this module as a dict shape — intentionally kept as a dict because it comes directly from an LLM tool call, but the canonical field list is defined here.
+
+This layout lets two developers work on different agents in parallel with no file conflicts: each agent is a full deliverable (code + prompts + tools + tests).
 
 ## 11a. Development environment
 

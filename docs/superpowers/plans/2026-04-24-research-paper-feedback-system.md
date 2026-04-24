@@ -12,24 +12,45 @@
 
 ---
 
+## Parallelization and decoupling
+
+Each agent is a **self-contained subpackage** under `paperfb/agents/` with one public function exposed via `__init__.py`. Internal modules (agent, prompts, tools, sampler) are package-private. Inter-agent types live in `paperfb/contracts.py` — the only cross-agent import surface. Invariants:
+
+- An agent subpackage imports only from: its own submodules, `paperfb.contracts`, `paperfb.config`, `paperfb.llm_client`, stdlib, third-party.
+- An agent subpackage MUST NOT import from another agent subpackage.
+- Only `orchestrator.py` imports multiple agents (via their public APIs).
+- Public function shape: `def <verb>(required_input, cfg: Config, llm: LLMClient) -> OutputType`. Stateless, deps explicit.
+
+**Two-developer split (suggested):**
+
+After Task 1 (scaffolding, shared), Task 2 (config), Task 2b (contracts) — both developers can work in parallel:
+
+- **Track A (LLM-integration path):** Task 3 (LLM client) → Task 4 (data prep) → Task 5 (lookup_acm) → Task 6 (Classification agent) → Task 8 (Profile Creation agent, LLM part) → Task 10 (Reviewer agent).
+- **Track B (deterministic / supporting):** Task 7 (Profile sampler) → Task 9 (write_review tool) → Task 11 (Renderer) → Task 14 (Judge).
+
+Task 12 (Orchestrator) is the merge point. Tasks 13, 15, 16 close out.
+
+---
+
 ## File map
 
 Files created, grouped by task:
 
-- **Task 1:** `pyproject.toml`, `.gitignore`, `paperfb/__init__.py`, `paperfb/agents/__init__.py`, `paperfb/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
+- **Task 1:** `pyproject.toml`, `.gitignore`, `.mise.toml`, `paperfb/__init__.py`, `paperfb/__main__.py`, `paperfb/agents/__init__.py`, `paperfb/agents/classification/__init__.py`, `paperfb/agents/profile_creation/__init__.py`, `paperfb/agents/reviewer/__init__.py`, `tests/__init__.py`, `tests/agents/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
 - **Task 2:** `paperfb/config.py`, `tests/test_config.py`
+- **Task 2b:** `paperfb/contracts.py`, `tests/test_contracts.py`
 - **Task 3:** `paperfb/llm_client.py`, `tests/test_llm_client.py`
 - **Task 4:** `scripts/build_acm_ccs.py`, `tests/test_build_acm_ccs.py`, `tests/fixtures/ccs_sample.xml`, generated `data/acm_ccs.json`
-- **Task 5:** `paperfb/tools/lookup_acm.py`, `tests/test_lookup_acm.py`
-- **Task 6:** `paperfb/agents/classification.py`, `tests/test_classification.py`
-- **Task 7:** `paperfb/agents/profile_sampler.py`, `tests/test_profile_sampler.py`
-- **Task 8:** `paperfb/agents/profile_creation.py`, `tests/test_profile_creation.py`
-- **Task 9:** `paperfb/tools/write_review.py`, `tests/test_write_review.py`
-- **Task 10:** `paperfb/agents/reviewer.py`, `tests/test_reviewer.py`
+- **Task 5:** `paperfb/agents/classification/tools.py`, `tests/agents/classification/test_tools.py`
+- **Task 6:** `paperfb/agents/classification/{__init__.py, agent.py, prompts.py}`, `tests/agents/classification/test_agent.py`
+- **Task 7:** `paperfb/agents/profile_creation/sampler.py`, `tests/agents/profile_creation/test_sampler.py`
+- **Task 8:** `paperfb/agents/profile_creation/{__init__.py, agent.py, prompts.py}`, `tests/agents/profile_creation/test_agent.py`
+- **Task 9:** `paperfb/agents/reviewer/tools.py`, `tests/agents/reviewer/test_tools.py`
+- **Task 10:** `paperfb/agents/reviewer/{__init__.py, agent.py, prompts.py}`, `tests/agents/reviewer/test_agent.py`
 - **Task 11:** `paperfb/renderer.py`, `tests/test_renderer.py`
 - **Task 12:** `paperfb/orchestrator.py`, `tests/test_orchestrator.py`
 - **Task 13:** `paperfb/main.py`, `tests/test_main.py`
-- **Task 14:** `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/good_review.json`, `tests/fixtures/bad_review.json`
+- **Task 14:** `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/{good_review.json, bad_review.json, tiny_manuscript_for_judge.md}`
 - **Task 15:** `tests/test_acceptance_live.py`, `tests/fixtures/tiny_manuscript.md`
 - **Task 16:** `README.md`
 
@@ -38,7 +59,7 @@ Files created, grouped by task:
 ## Task 1: Project scaffolding
 
 **Files:**
-- Create: `.mise.toml`, `pyproject.toml`, `.gitignore`, `paperfb/__init__.py`, `paperfb/__main__.py`, `paperfb/agents/__init__.py`, `paperfb/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
+- Create: `.mise.toml`, `pyproject.toml`, `.gitignore`, `paperfb/__init__.py`, `paperfb/__main__.py`, `paperfb/agents/__init__.py`, `paperfb/agents/classification/__init__.py`, `paperfb/agents/profile_creation/__init__.py`, `paperfb/agents/reviewer/__init__.py`, `tests/__init__.py`, `tests/agents/__init__.py`, `tests/agents/classification/__init__.py`, `tests/agents/profile_creation/__init__.py`, `tests/agents/reviewer/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
 
 - [ ] **Step 0: Create `.mise.toml`**
 
@@ -113,8 +134,14 @@ Create empty files:
 
 - `paperfb/__init__.py`
 - `paperfb/agents/__init__.py`
-- `paperfb/tools/__init__.py`
+- `paperfb/agents/classification/__init__.py`
+- `paperfb/agents/profile_creation/__init__.py`
+- `paperfb/agents/reviewer/__init__.py`
 - `tests/__init__.py`
+- `tests/agents/__init__.py`
+- `tests/agents/classification/__init__.py`
+- `tests/agents/profile_creation/__init__.py`
+- `tests/agents/reviewer/__init__.py`
 - `scripts/__init__.py`
 
 Create `paperfb/__main__.py` so `python -m paperfb` works:
@@ -340,6 +367,127 @@ Expected: 3 passed.
 ```bash
 git add paperfb/config.py tests/test_config.py
 git commit -m "Add config loader with validation"
+```
+
+---
+
+## Task 2b: Shared contracts module
+
+**Files:**
+- Create: `paperfb/contracts.py`, `tests/test_contracts.py`
+
+The single cross-agent type surface. Every agent imports its inter-agent types from here; agents never import from each other.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/test_contracts.py`:
+
+```python
+from paperfb.contracts import (
+    ReviewerTuple,
+    ReviewerProfile,
+    ClassificationResult,
+    REVIEW_REQUIRED_FIELDS,
+)
+
+
+def test_reviewer_tuple_fields():
+    t = ReviewerTuple(id="r1", specialty={"path": "X"}, stance="neutral",
+                     primary_focus="methods", secondary_focus="results")
+    assert t.id == "r1"
+    assert t.specialty == {"path": "X"}
+
+
+def test_reviewer_profile_fields():
+    p = ReviewerProfile(id="r1", specialty={"path": "X"}, stance="neutral",
+                       primary_focus="methods", secondary_focus=None,
+                       persona_prompt="You are ...")
+    assert p.persona_prompt == "You are ..."
+    assert p.secondary_focus is None
+
+
+def test_classification_result_holds_list():
+    r = ClassificationResult(classes=[{"path": "X", "weight": "High", "rationale": "x"}])
+    assert r.classes[0]["weight"] == "High"
+
+
+def test_review_required_fields_declared():
+    for f in ["reviewer_id", "stance", "focus", "strengths", "weaknesses",
+              "suggestions", "section_comments", "overall_assessment"]:
+        assert f in REVIEW_REQUIRED_FIELDS
+```
+
+- [ ] **Step 2: Run to verify fail**
+
+Run: `pytest tests/test_contracts.py -v`
+Expected: FAIL (module not found).
+
+- [ ] **Step 3: Implement `paperfb/contracts.py`**
+
+```python
+"""Shared cross-agent types.
+
+This module is the sole integration surface between agents. Agent subpackages
+import their inter-agent types from here and never from each other.
+
+Review dict shape (produced by Reviewer Agent's write_review tool, consumed by
+Renderer and Judge) is documented via REVIEW_REQUIRED_FIELDS below. Kept as a
+dict rather than a dataclass because it arrives directly from an LLM tool call.
+"""
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class ReviewerTuple:
+    """Deterministic sampler output; input to Profile Creation LLM step."""
+    id: str
+    specialty: dict                 # {path, weight, description, ...} from ACM classes
+    stance: str
+    primary_focus: str
+    secondary_focus: Optional[str]
+
+
+@dataclass
+class ReviewerProfile:
+    """Profile Creation output; input to Reviewer Agent."""
+    id: str
+    specialty: dict
+    stance: str
+    primary_focus: str
+    secondary_focus: Optional[str]
+    persona_prompt: str
+
+
+@dataclass
+class ClassificationResult:
+    """Classification Agent output. `classes` is a list of
+    {path: str, weight: 'High'|'Medium'|'Low', rationale: str} dicts."""
+    classes: list[dict]
+
+
+REVIEW_REQUIRED_FIELDS = [
+    "reviewer_id",
+    "stance",
+    "focus",
+    "strengths",
+    "weaknesses",
+    "suggestions",
+    "section_comments",
+    "overall_assessment",
+]
+```
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `pytest tests/test_contracts.py -v`
+Expected: 4 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add paperfb/contracts.py tests/test_contracts.py
+git commit -m "Add shared contracts module for cross-agent types"
 ```
 
 ---
@@ -823,17 +971,17 @@ git commit -m "Add ACM CCS data-prep tool and generated taxonomy"
 ## Task 5: lookup_acm tool
 
 **Files:**
-- Create: `paperfb/tools/lookup_acm.py`, `tests/test_lookup_acm.py`
+- Create: `paperfb/agents/classification/tools.py`, `tests/agents/classification/test_tools.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_lookup_acm.py`:
+Create `tests/agents/classification/test_tools.py`:
 
 ```python
 import json
 from pathlib import Path
 import pytest
-from paperfb.tools.lookup_acm import lookup_acm, load_ccs, TOOL_SCHEMA
+from paperfb.agents.classification.tools import lookup_acm, load_ccs, TOOL_SCHEMA
 
 
 @pytest.fixture
@@ -884,10 +1032,10 @@ def test_load_ccs_from_file(ccs_path):
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pytest tests/test_lookup_acm.py -v`
+Run: `pytest tests/agents/classification/test_tools.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `paperfb/tools/lookup_acm.py`**
+- [ ] **Step 3: Implement `paperfb/agents/classification/tools.py`**
 
 ```python
 import json
@@ -942,13 +1090,13 @@ def lookup_acm(query: str, k: int = 10, ccs_path: Optional[Path] = None) -> list
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pytest tests/test_lookup_acm.py -v`
+Run: `pytest tests/agents/classification/test_tools.py -v`
 Expected: 6 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add paperfb/tools/lookup_acm.py tests/test_lookup_acm.py
+git add paperfb/agents/classification/tools.py tests/agents/classification/test_tools.py
 git commit -m "Add lookup_acm tool with schema"
 ```
 
@@ -957,11 +1105,11 @@ git commit -m "Add lookup_acm tool with schema"
 ## Task 6: Classification Agent
 
 **Files:**
-- Create: `paperfb/agents/classification.py`, `tests/test_classification.py`
+- Create: `paperfb/agents/classification/agent.py`, `tests/agents/classification/test_agent.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_classification.py`:
+Create `tests/agents/classification/test_agent.py`:
 
 ```python
 import json
@@ -1037,16 +1185,16 @@ def test_classify_raises_when_no_classes(tmp_path):
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pytest tests/test_classification.py -v`
+Run: `pytest tests/agents/classification/test_agent.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `paperfb/agents/classification.py`**
+- [ ] **Step 3: Implement `paperfb/agents/classification/agent.py`**
 
 ```python
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from paperfb.tools.lookup_acm import lookup_acm, TOOL_SCHEMA
+from paperfb.contracts import ClassificationResult
+from paperfb.agents.classification.tools import lookup_acm, TOOL_SCHEMA
 
 SYSTEM_PROMPT = """You classify a computer-science research manuscript against the ACM Computing Classification System (CCS).
 Rules:
@@ -1058,11 +1206,6 @@ Rules:
   {{"classes": [{{"path": "<full CCS path>", "weight": "High|Medium|Low", "rationale": "<short>"}}]}}
 - Do not include any text outside the JSON object.
 """
-
-
-@dataclass
-class ClassificationResult:
-    classes: list[dict]
 
 
 def classify_manuscript(manuscript: str, llm, model: str, ccs_path: Path,
@@ -1105,14 +1248,27 @@ def classify_manuscript(manuscript: str, llm, model: str, ccs_path: Path,
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pytest tests/test_classification.py -v`
+Run: `pytest tests/agents/classification/test_agent.py -v`
 Expected: 2 passed.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Create `paperfb/agents/classification/__init__.py` re-export**
+
+```python
+"""Classification agent — public API.
+
+Downstream code (orchestrator, tests) should import only from here.
+"""
+from paperfb.agents.classification.agent import classify_manuscript
+from paperfb.contracts import ClassificationResult
+
+__all__ = ["classify_manuscript", "ClassificationResult"]
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add paperfb/agents/classification.py tests/test_classification.py
-git commit -m "Add Classification Agent with lookup_acm tool loop"
+git add paperfb/agents/classification/ tests/agents/classification/
+git commit -m "Add Classification Agent subpackage with public re-export"
 ```
 
 ---
@@ -1120,17 +1276,17 @@ git commit -m "Add Classification Agent with lookup_acm tool loop"
 ## Task 7: Profile sampler (deterministic)
 
 **Files:**
-- Create: `paperfb/agents/profile_sampler.py`, `tests/test_profile_sampler.py`
+- Create: `paperfb/agents/profile_creation/sampler.py`, `tests/agents/profile_creation/test_sampler.py`
 
 This is the meat of the "don't be shallow" design. Test-heavy, pure Python.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_profile_sampler.py`:
+Create `tests/agents/profile_creation/test_sampler.py`:
 
 ```python
 import pytest
-from paperfb.agents.profile_sampler import sample_reviewer_tuples, ReviewerTuple
+from paperfb.agents.profile_creation.sampler import sample_reviewer_tuples, ReviewerTuple
 
 STANCES = ["neutral", "critical", "skeptical", "supportive", "rigorous"]
 FOCUSES = ["methods", "results", "impact", "novelty", "clarity", "reproducibility"]
@@ -1214,24 +1370,16 @@ def test_secondary_focus_maximises_coverage():
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pytest tests/test_profile_sampler.py -v`
+Run: `pytest tests/agents/profile_creation/test_sampler.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `paperfb/agents/profile_sampler.py`**
+- [ ] **Step 3: Implement `paperfb/agents/profile_creation/sampler.py`**
 
 ```python
 import random
-from dataclasses import dataclass
 from typing import Optional
 
-
-@dataclass(frozen=True)
-class ReviewerTuple:
-    id: str
-    specialty: dict
-    stance: str
-    primary_focus: str
-    secondary_focus: Optional[str]
+from paperfb.contracts import ReviewerTuple
 
 
 def _sort_classes_by_weight(classes: list[dict]) -> list[dict]:
@@ -1316,13 +1464,13 @@ def sample_reviewer_tuples(
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pytest tests/test_profile_sampler.py -v`
+Run: `pytest tests/agents/profile_creation/test_sampler.py -v`
 Expected: 10 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add paperfb/agents/profile_sampler.py tests/test_profile_sampler.py
+git add paperfb/agents/profile_creation/sampler.py tests/agents/profile_creation/test_sampler.py
 git commit -m "Add deterministic profile sampler with core-focus coverage"
 ```
 
@@ -1331,17 +1479,17 @@ git commit -m "Add deterministic profile sampler with core-focus coverage"
 ## Task 8: Profile Creation Agent (LLM step)
 
 **Files:**
-- Create: `paperfb/agents/profile_creation.py`, `tests/test_profile_creation.py`
+- Create: `paperfb/agents/profile_creation/agent.py`, `tests/agents/profile_creation/test_agent.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_profile_creation.py`:
+Create `tests/agents/profile_creation/test_agent.py`:
 
 ```python
 import json
 from unittest.mock import MagicMock
 from paperfb.agents.profile_creation import create_profiles, ReviewerProfile
-from paperfb.agents.profile_sampler import ReviewerTuple
+from paperfb.agents.profile_creation.sampler import ReviewerTuple
 
 
 def _final(content):
@@ -1378,15 +1526,13 @@ def test_creates_profile_per_tuple():
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pytest tests/test_profile_creation.py -v`
+Run: `pytest tests/agents/profile_creation/test_agent.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `paperfb/agents/profile_creation.py`**
+- [ ] **Step 3: Implement `paperfb/agents/profile_creation/agent.py`**
 
 ```python
-from dataclasses import dataclass
-from typing import Optional
-from paperfb.agents.profile_sampler import ReviewerTuple
+from paperfb.contracts import ReviewerTuple, ReviewerProfile
 
 PERSONA_SYSTEM = """You generate the system prompt for an AI reviewer persona for a research-paper feedback system.
 Given: specialty (ACM CCS class), stance, primary focus, secondary focus — produce the full system prompt that reviewer will use to review a manuscript.
@@ -1400,16 +1546,6 @@ Requirements for the system prompt you produce:
 - Forbid the reviewer from rewriting the paper.
 - No meta-commentary, no preamble — output the system prompt directly.
 """
-
-
-@dataclass
-class ReviewerProfile:
-    id: str
-    specialty: dict
-    stance: str
-    primary_focus: str
-    secondary_focus: Optional[str]
-    persona_prompt: str
 
 
 def create_profiles(tuples: list[ReviewerTuple], llm, model: str) -> list[ReviewerProfile]:
@@ -1442,14 +1578,26 @@ def create_profiles(tuples: list[ReviewerTuple], llm, model: str) -> list[Review
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pytest tests/test_profile_creation.py -v`
+Run: `pytest tests/agents/profile_creation/test_agent.py -v`
 Expected: 1 passed.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Create `paperfb/agents/profile_creation/__init__.py` re-export**
+
+```python
+"""Profile Creation agent — public API."""
+from paperfb.agents.profile_creation.agent import create_profiles
+from paperfb.agents.profile_creation.sampler import sample_reviewer_tuples
+from paperfb.contracts import ReviewerTuple, ReviewerProfile
+
+__all__ = ["create_profiles", "sample_reviewer_tuples",
+           "ReviewerTuple", "ReviewerProfile"]
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add paperfb/agents/profile_creation.py tests/test_profile_creation.py
-git commit -m "Add Profile Creation Agent LLM step"
+git add paperfb/agents/profile_creation/ tests/agents/profile_creation/
+git commit -m "Add Profile Creation subpackage with public re-export"
 ```
 
 ---
@@ -1457,17 +1605,17 @@ git commit -m "Add Profile Creation Agent LLM step"
 ## Task 9: write_review tool
 
 **Files:**
-- Create: `paperfb/tools/write_review.py`, `tests/test_write_review.py`
+- Create: `paperfb/agents/reviewer/tools.py`, `tests/agents/reviewer/test_tools.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_write_review.py`:
+Create `tests/agents/reviewer/test_tools.py`:
 
 ```python
 import json
 from pathlib import Path
 import pytest
-from paperfb.tools.write_review import write_review, TOOL_SCHEMA, ReviewValidationError
+from paperfb.agents.reviewer.tools import write_review, TOOL_SCHEMA, ReviewValidationError
 
 
 def _sample_review(rid="r1"):
@@ -1514,10 +1662,10 @@ def test_tool_schema_lists_required_fields():
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pytest tests/test_write_review.py -v`
+Run: `pytest tests/agents/reviewer/test_tools.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `paperfb/tools/write_review.py`**
+- [ ] **Step 3: Implement `paperfb/agents/reviewer/tools.py`**
 
 ```python
 import json
@@ -1590,13 +1738,13 @@ def write_review(review: dict, reviews_dir: Path) -> Path:
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pytest tests/test_write_review.py -v`
+Run: `pytest tests/agents/reviewer/test_tools.py -v`
 Expected: 4 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add paperfb/tools/write_review.py tests/test_write_review.py
+git add paperfb/agents/reviewer/tools.py tests/agents/reviewer/test_tools.py
 git commit -m "Add write_review tool with validation"
 ```
 
@@ -1605,11 +1753,11 @@ git commit -m "Add write_review tool with validation"
 ## Task 10: Reviewer Agent
 
 **Files:**
-- Create: `paperfb/agents/reviewer.py`, `tests/test_reviewer.py`
+- Create: `paperfb/agents/reviewer/agent.py`, `tests/agents/reviewer/test_agent.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_reviewer.py`:
+Create `tests/agents/reviewer/test_agent.py`:
 
 ```python
 import json
@@ -1680,16 +1828,16 @@ def test_reviewer_invalid_review_retries_then_skips(tmp_path):
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pytest tests/test_reviewer.py -v`
+Run: `pytest tests/agents/reviewer/test_agent.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `paperfb/agents/reviewer.py`**
+- [ ] **Step 3: Implement `paperfb/agents/reviewer/agent.py`**
 
 ```python
 import json
 from pathlib import Path
 from paperfb.agents.profile_creation import ReviewerProfile
-from paperfb.tools.write_review import write_review, TOOL_SCHEMA, ReviewValidationError
+from paperfb.agents.reviewer.tools import write_review, TOOL_SCHEMA, ReviewValidationError
 
 REVIEWER_USER_TEMPLATE = """Manuscript follows between the markers.
 
@@ -1739,14 +1887,23 @@ def run_reviewer(profile: ReviewerProfile, manuscript: str, llm, model: str,
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pytest tests/test_reviewer.py -v`
+Run: `pytest tests/agents/reviewer/test_agent.py -v`
 Expected: 2 passed.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Create `paperfb/agents/reviewer/__init__.py` re-export**
+
+```python
+"""Reviewer agent — public API."""
+from paperfb.agents.reviewer.agent import run_reviewer
+
+__all__ = ["run_reviewer"]
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add paperfb/agents/reviewer.py tests/test_reviewer.py
-git commit -m "Add Reviewer Agent with write_review tool loop"
+git add paperfb/agents/reviewer/ tests/agents/reviewer/
+git commit -m "Add Reviewer Agent subpackage with public re-export"
 ```
 
 ---
@@ -1935,7 +2092,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         for i in range(3)
     ]
     # need concrete ReviewerTuple/Profile types for real code path:
-    from paperfb.agents.profile_sampler import ReviewerTuple
+    from paperfb.agents.profile_creation.sampler import ReviewerTuple
     from paperfb.agents.profile_creation import ReviewerProfile
     tuples = [
         ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML", "weight": "High"},
@@ -1977,7 +2134,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
 
 
 def test_reviewer_failure_is_skipped(cfg, tmp_path):
-    from paperfb.agents.profile_sampler import ReviewerTuple
+    from paperfb.agents.profile_creation.sampler import ReviewerTuple
     from paperfb.agents.profile_creation import ReviewerProfile
     tuples = [ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML"}, stance="critical",
                              primary_focus=["methods", "results", "novelty"][i],
@@ -2025,8 +2182,7 @@ from pathlib import Path
 
 from paperfb.config import Config
 from paperfb.agents.classification import classify_manuscript, ClassificationResult
-from paperfb.agents.profile_sampler import sample_reviewer_tuples
-from paperfb.agents.profile_creation import create_profiles
+from paperfb.agents.profile_creation import create_profiles, sample_reviewer_tuples
 from paperfb.agents.reviewer import run_reviewer
 from paperfb.renderer import render_report
 
