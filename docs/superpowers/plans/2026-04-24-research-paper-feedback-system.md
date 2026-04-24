@@ -16,19 +16,19 @@
 
 Files created, grouped by task:
 
-- **Task 1:** `pyproject.toml`, `.gitignore`, `src/__init__.py`, `src/agents/__init__.py`, `src/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
-- **Task 2:** `src/config.py`, `tests/test_config.py`
-- **Task 3:** `src/llm_client.py`, `tests/test_llm_client.py`
-- **Task 4:** `data/acm_ccs.json` (seed), `scripts/build_acm_ccs.py`
-- **Task 5:** `src/tools/lookup_acm.py`, `tests/test_lookup_acm.py`
-- **Task 6:** `src/agents/classification.py`, `tests/test_classification.py`
-- **Task 7:** `src/agents/profile_sampler.py`, `tests/test_profile_sampler.py`
-- **Task 8:** `src/agents/profile_creation.py`, `tests/test_profile_creation.py`
-- **Task 9:** `src/tools/write_review.py`, `tests/test_write_review.py`
-- **Task 10:** `src/agents/reviewer.py`, `tests/test_reviewer.py`
-- **Task 11:** `src/renderer.py`, `tests/test_renderer.py`
-- **Task 12:** `src/orchestrator.py`, `tests/test_orchestrator.py`
-- **Task 13:** `src/main.py`, `tests/test_main.py`
+- **Task 1:** `pyproject.toml`, `.gitignore`, `paperfb/__init__.py`, `paperfb/agents/__init__.py`, `paperfb/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
+- **Task 2:** `paperfb/config.py`, `tests/test_config.py`
+- **Task 3:** `paperfb/llm_client.py`, `tests/test_llm_client.py`
+- **Task 4:** `scripts/build_acm_ccs.py`, `tests/test_build_acm_ccs.py`, `tests/fixtures/ccs_sample.xml`, generated `data/acm_ccs.json`
+- **Task 5:** `paperfb/tools/lookup_acm.py`, `tests/test_lookup_acm.py`
+- **Task 6:** `paperfb/agents/classification.py`, `tests/test_classification.py`
+- **Task 7:** `paperfb/agents/profile_sampler.py`, `tests/test_profile_sampler.py`
+- **Task 8:** `paperfb/agents/profile_creation.py`, `tests/test_profile_creation.py`
+- **Task 9:** `paperfb/tools/write_review.py`, `tests/test_write_review.py`
+- **Task 10:** `paperfb/agents/reviewer.py`, `tests/test_reviewer.py`
+- **Task 11:** `paperfb/renderer.py`, `tests/test_renderer.py`
+- **Task 12:** `paperfb/orchestrator.py`, `tests/test_orchestrator.py`
+- **Task 13:** `paperfb/main.py`, `tests/test_main.py`
 - **Task 14:** `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/good_review.json`, `tests/fixtures/bad_review.json`
 - **Task 15:** `tests/test_acceptance_live.py`, `tests/fixtures/tiny_manuscript.md`
 - **Task 16:** `README.md`
@@ -38,7 +38,7 @@ Files created, grouped by task:
 ## Task 1: Project scaffolding
 
 **Files:**
-- Create: `.mise.toml`, `pyproject.toml`, `.gitignore`, `src/__init__.py`, `src/agents/__init__.py`, `src/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
+- Create: `.mise.toml`, `pyproject.toml`, `.gitignore`, `paperfb/__init__.py`, `paperfb/__main__.py`, `paperfb/agents/__init__.py`, `paperfb/tools/__init__.py`, `tests/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
 
 - [ ] **Step 0: Create `.mise.toml`**
 
@@ -73,6 +73,9 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 
+[project.scripts]
+paperfb = "paperfb.main:main"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [
@@ -83,7 +86,7 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["paperfb*"]
 ```
 
 - [ ] **Step 2: Create `.gitignore`**
@@ -96,21 +99,32 @@ __pycache__/
 reviews/
 logs/
 evaluations/
-data/acm_ccs.json
+data/ccs_source.xml
+data/_ccs_descriptions_cache.json
 .pytest_cache/
 *.egg-info/
 ```
 
-Note: `data/acm_ccs.json` is derived by Task 4; keep out of git unless it's the hand-seeded fixture. We will track a small seed file explicitly with `git add -f` in Task 4.
+Note: `data/acm_ccs.json` IS committed (it's the prep-tool output consumed by the pipeline). The raw XML source and the per-run description cache are not.
 
 - [ ] **Step 3: Create package init files**
 
 Create empty files:
-- `src/__init__.py`
-- `src/agents/__init__.py`
-- `src/tools/__init__.py`
+
+- `paperfb/__init__.py`
+- `paperfb/agents/__init__.py`
+- `paperfb/tools/__init__.py`
 - `tests/__init__.py`
 - `scripts/__init__.py`
+
+Create `paperfb/__main__.py` so `python -m paperfb` works:
+
+```python
+from paperfb.main import main
+import sys
+
+raise SystemExit(main(sys.argv[1:]))
+```
 
 - [ ] **Step 4: Create `config/default.yaml`**
 
@@ -175,7 +189,7 @@ Expected: `.venv` created, `uv.lock` generated, `pytest --collect-only` reports 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add .mise.toml pyproject.toml uv.lock .gitignore src/ tests/ scripts/ config/
+git add .mise.toml pyproject.toml uv.lock .gitignore paperfb/ tests/ scripts/ config/
 git commit -m "Scaffold project layout, mise/uv toolchain, config, and deps"
 ```
 
@@ -184,7 +198,7 @@ git commit -m "Scaffold project layout, mise/uv toolchain, config, and deps"
 ## Task 2: Config loader
 
 **Files:**
-- Create: `src/config.py`, `tests/test_config.py`
+- Create: `paperfb/config.py`, `tests/test_config.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -193,7 +207,7 @@ Create `tests/test_config.py`:
 ```python
 from pathlib import Path
 import pytest
-from src.config import load_config, Config
+from paperfb.config import load_config, Config
 
 
 def test_load_defaults():
@@ -230,9 +244,9 @@ def test_core_focuses_must_be_subset_of_focuses():
 - [ ] **Step 2: Run to verify fail**
 
 Run: `pytest tests/test_config.py -v`
-Expected: FAIL (ImportError: cannot import from src.config).
+Expected: FAIL (ImportError: cannot import from paperfb.config).
 
-- [ ] **Step 3: Implement `src/config.py`**
+- [ ] **Step 3: Implement `paperfb/config.py`**
 
 ```python
 from dataclasses import dataclass
@@ -324,7 +338,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/config.py tests/test_config.py
+git add paperfb/config.py tests/test_config.py
 git commit -m "Add config loader with validation"
 ```
 
@@ -333,7 +347,7 @@ git commit -m "Add config loader with validation"
 ## Task 3: LLM client
 
 **Files:**
-- Create: `src/llm_client.py`, `tests/test_llm_client.py`
+- Create: `paperfb/llm_client.py`, `tests/test_llm_client.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -342,7 +356,7 @@ Create `tests/test_llm_client.py`:
 ```python
 from unittest.mock import MagicMock, patch
 import pytest
-from src.llm_client import LLMClient, RetryableError
+from paperfb.llm_client import LLMClient, RetryableError
 
 
 def make_response(content="hi", tool_calls=None, finish_reason="stop"):
@@ -416,7 +430,7 @@ def test_usage_summary_accumulates_across_calls():
 Run: `pytest tests/test_llm_client.py -v`
 Expected: FAIL (module not found).
 
-- [ ] **Step 3: Implement `src/llm_client.py`**
+- [ ] **Step 3: Implement `paperfb/llm_client.py`**
 
 ```python
 import os
@@ -499,97 +513,309 @@ Expected: 5 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/llm_client.py tests/test_llm_client.py
+git add paperfb/llm_client.py tests/test_llm_client.py
 git commit -m "Add LLM client wrapper with retry/backoff"
 ```
 
 ---
 
-## Task 4: ACM CCS seed data
+## Task 4: ACM CCS data preparation tool
 
 **Files:**
-- Create: `data/acm_ccs.json`, `scripts/build_acm_ccs.py`
+- Create: `scripts/build_acm_ccs.py`, `tests/test_build_acm_ccs.py`, `tests/fixtures/ccs_sample.xml`
+- Produce at runtime: `data/acm_ccs.json`, `data/_ccs_descriptions_cache.json`
 
-This task provides a hand-curated seed dataset sufficient for end-to-end testing. The scraper script is stubbed with a clear TODO for future expansion — this is acceptable because the spec §14 lists "Source of ACM CCS tree" as an unresolved question. The seed covers the top two levels of the CCS plus representative leaves, enough for classification of typical CS papers.
+Runs outside the agentic pipeline as a one-time prep step. Parses ACM's CCS 2012 SKOS/XML dump into a flat tree, generates a 1–2 sentence description per node via the LLM (cached to disk), emits `data/acm_ccs.json` consumed by `lookup_acm`.
 
-- [ ] **Step 1: Create `data/acm_ccs.json`**
+**Prerequisite (manual, one-off):** download the ACM CCS 2012 SKOS XML from ACM's classification page and save it to `data/ccs_source.xml`. The exact download URL and precise XML schema may change — the parser below assumes a SKOS/RDF shape (`skos:Concept` with `skos:prefLabel` and `skos:broader`). Adapt element / namespace references to the actual downloaded file if needed.
 
-```json
-[
-  {"path": "General and reference", "leaf": false, "description": "Cross-cutting topics including general literature, reference works, and historical context."},
-  {"path": "General and reference → Document types → Surveys and overviews", "leaf": true, "description": "Survey papers and broad overviews of a field."},
-  {"path": "Hardware → Integrated circuits", "leaf": false, "description": "Physical circuit design, VLSI, ASIC, FPGA topics."},
-  {"path": "Computer systems organization → Architectures → Parallel architectures", "leaf": true, "description": "Multi-processor and parallel computing system architectures."},
-  {"path": "Computer systems organization → Dependable and fault-tolerant systems and networks", "leaf": true, "description": "Reliability, fault tolerance, Byzantine failures, high-availability."},
-  {"path": "Networks → Network architectures → Network protocols", "leaf": true, "description": "Design and analysis of network protocols at any layer."},
-  {"path": "Networks → Network performance evaluation", "leaf": true, "description": "Measurement, modelling, and analysis of network behaviour."},
-  {"path": "Software and its engineering → Software notations and tools → General programming languages", "leaf": true, "description": "Programming language design, type systems, semantics."},
-  {"path": "Software and its engineering → Software creation and management → Software development process management", "leaf": true, "description": "Methodologies, agile, DevOps, project management for software."},
-  {"path": "Software and its engineering → Software creation and management → Software verification and validation", "leaf": true, "description": "Testing, model checking, formal verification."},
-  {"path": "Theory of computation → Theory and algorithms for application domains → Machine learning theory", "leaf": true, "description": "Theoretical foundations of machine learning including PAC learning and generalization bounds."},
-  {"path": "Theory of computation → Design and analysis of algorithms", "leaf": false, "description": "Algorithmic design, complexity, approximation, randomized algorithms."},
-  {"path": "Theory of computation → Logic → Automated reasoning", "leaf": true, "description": "SAT/SMT solvers, theorem provers, symbolic reasoning."},
-  {"path": "Mathematics of computing → Probability and statistics → Statistical paradigms → Bayesian computation", "leaf": true, "description": "MCMC, variational inference, Bayesian deep learning."},
-  {"path": "Information systems → Data management systems → Database design and models", "leaf": false, "description": "Relational, NoSQL, graph, document database modelling."},
-  {"path": "Information systems → Information retrieval → Retrieval models and ranking", "leaf": true, "description": "Search ranking, BM25, learning-to-rank, neural retrieval."},
-  {"path": "Security and privacy → Cryptography", "leaf": false, "description": "Encryption, signatures, zero-knowledge proofs, cryptographic protocols."},
-  {"path": "Security and privacy → Systems security → Operating systems security", "leaf": true, "description": "OS-level defences, trusted execution, isolation."},
-  {"path": "Human-centered computing → Human computer interaction (HCI) → HCI design and evaluation methods", "leaf": true, "description": "User studies, usability evaluation, design methodologies."},
-  {"path": "Human-centered computing → Visualization → Visualization techniques", "leaf": true, "description": "Techniques for representing data visually: charts, graphs, network layouts."},
-  {"path": "Computing methodologies → Machine learning → Learning paradigms → Supervised learning", "leaf": true, "description": "Classification, regression, supervised neural networks."},
-  {"path": "Computing methodologies → Machine learning → Learning paradigms → Reinforcement learning", "leaf": true, "description": "MDPs, policy gradient, Q-learning, exploration."},
-  {"path": "Computing methodologies → Machine learning → Machine learning approaches → Neural networks", "leaf": true, "description": "Deep learning, CNNs, transformers, attention mechanisms."},
-  {"path": "Computing methodologies → Artificial intelligence → Natural language processing", "leaf": true, "description": "Parsing, semantics, dialogue, summarization, translation."},
-  {"path": "Computing methodologies → Computer graphics → Rendering", "leaf": true, "description": "Real-time and photoreal rendering, ray tracing, shaders."},
-  {"path": "Applied computing → Life and medical sciences → Bioinformatics", "leaf": true, "description": "Genomics, protein structure prediction, systems biology."},
-  {"path": "Applied computing → Education → Interactive learning environments", "leaf": true, "description": "Intelligent tutoring systems, MOOCs, learning analytics."},
-  {"path": "Social and professional topics → Computing / technology policy", "leaf": false, "description": "Ethics, regulation, societal impact of computing."},
-  {"path": "Proper nouns: People, technologies and companies", "leaf": false, "description": "Named entities treated as classification anchors (rarely top-weight)."}
-]
+- [ ] **Step 1: Create a tiny fixture XML mimicking the CCS shape**
+
+`tests/fixtures/ccs_sample.xml`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:skos="http://www.w3.org/2004/02/skos/core#">
+  <skos:Concept rdf:about="urn:ccs:root">
+    <skos:prefLabel xml:lang="en">Computing methodologies</skos:prefLabel>
+  </skos:Concept>
+  <skos:Concept rdf:about="urn:ccs:ml">
+    <skos:prefLabel xml:lang="en">Machine learning</skos:prefLabel>
+    <skos:broader rdf:resource="urn:ccs:root"/>
+  </skos:Concept>
+  <skos:Concept rdf:about="urn:ccs:nn">
+    <skos:prefLabel xml:lang="en">Neural networks</skos:prefLabel>
+    <skos:broader rdf:resource="urn:ccs:ml"/>
+  </skos:Concept>
+</rdf:RDF>
 ```
 
-- [ ] **Step 2: Force-add seed file and verify**
+- [ ] **Step 2: Write failing tests for the parser and description generator**
 
-```bash
-git add -f data/acm_ccs.json
-python -c "import json; print(len(json.load(open('data/acm_ccs.json'))), 'entries loaded')"
-```
-
-Expected: `29 entries loaded`.
-
-- [ ] **Step 3: Create `scripts/build_acm_ccs.py` (stub for future work)**
+Create `tests/test_build_acm_ccs.py`:
 
 ```python
-"""Build data/acm_ccs.json by scraping dl.acm.org/ccs.
+import json
+from pathlib import Path
+from unittest.mock import MagicMock
+import pytest
 
-Status: STUB. v1 uses hand-curated seed in data/acm_ccs.json.
-Future work: parse the ACM CCS XML/HTML tree and auto-generate
-per-node descriptions via an LLM call, cached to disk.
+from scripts.build_acm_ccs import (
+    parse_ccs_tree,
+    generate_descriptions,
+    build,
+)
 
-Run:
-    python scripts/build_acm_ccs.py --output data/acm_ccs.json
+
+FIXTURE = Path("tests/fixtures/ccs_sample.xml")
+
+
+def test_parse_ccs_tree_returns_paths_with_leaf_flags():
+    entries = parse_ccs_tree(FIXTURE)
+    paths = {e["path"]: e for e in entries}
+
+    assert "Computing methodologies" in paths
+    assert paths["Computing methodologies"]["leaf"] is False
+
+    assert "Computing methodologies → Machine learning" in paths
+    assert paths["Computing methodologies → Machine learning"]["leaf"] is False
+
+    leaf = "Computing methodologies → Machine learning → Neural networks"
+    assert leaf in paths
+    assert paths[leaf]["leaf"] is True
+
+
+def _stub_llm(return_content):
+    client = MagicMock()
+    res = MagicMock()
+    res.content = return_content
+    res.tool_calls = None
+    res.finish_reason = "stop"
+    client.chat.return_value = res
+    return client
+
+
+def test_generate_descriptions_caches_and_skips_cached(tmp_path):
+    entries = [
+        {"path": "A", "leaf": False},
+        {"path": "A → B", "leaf": True},
+    ]
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text(json.dumps({"A": "pre-cached description"}))
+
+    llm = _stub_llm("generated")
+    out = generate_descriptions(entries, llm=llm, model="stub", cache_path=cache_path)
+
+    assert out[0]["description"] == "pre-cached description"
+    assert out[1]["description"] == "generated"
+    assert llm.chat.call_count == 1   # only the uncached entry triggered a call
+
+    cached = json.loads(cache_path.read_text())
+    assert cached["A → B"] == "generated"
+
+
+def test_build_end_to_end_writes_output(tmp_path):
+    llm = _stub_llm("desc")
+    out_path = tmp_path / "acm_ccs.json"
+    cache_path = tmp_path / "cache.json"
+    build(source_xml=FIXTURE, out_path=out_path, cache_path=cache_path,
+          llm=llm, model="stub")
+    data = json.loads(out_path.read_text())
+    assert len(data) == 3
+    for entry in data:
+        assert "path" in entry and "leaf" in entry and "description" in entry
+```
+
+- [ ] **Step 3: Run to verify fail**
+
+Run: `pytest tests/test_build_acm_ccs.py -v`
+Expected: FAIL (module not found).
+
+- [ ] **Step 4: Implement `scripts/build_acm_ccs.py`**
+
+```python
+"""Build data/acm_ccs.json from the ACM CCS 2012 SKOS/XML dump.
+
+Run once as a preparation step, not part of the agentic pipeline:
+    uv run python scripts/build_acm_ccs.py \\
+        --source data/ccs_source.xml \\
+        --output data/acm_ccs.json \\
+        --cache  data/_ccs_descriptions_cache.json
+
+Outputs a flat list of {path, leaf, description} entries. Descriptions are
+generated via the LLM on first run and cached; reruns hit the cache.
 """
+from __future__ import annotations
 import argparse
+import json
 import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Iterable
+from dotenv import load_dotenv
+
+from paperfb.llm_client import from_env
+
+NS = {
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+}
+
+PATH_SEP = " → "
+
+DESC_SYSTEM = """You write concise 1–2 sentence descriptions of ACM Computing Classification System (CCS) concepts.
+Be factual, domain-grounded, and avoid marketing language. Reply with the description only, no preamble."""
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="data/acm_ccs.json")
-    parser.parse_args()
-    print("scripts/build_acm_ccs.py is a stub — see module docstring.", file=sys.stderr)
-    return 1
+def parse_ccs_tree(source_xml: Path) -> list[dict]:
+    """Parse SKOS/RDF XML into a flat list of {path, leaf} entries.
+
+    Adapt the element and attribute lookups if the actual file uses a
+    different namespace or shape.
+    """
+    tree = ET.parse(source_xml)
+    root = tree.getroot()
+
+    label: dict[str, str] = {}
+    parent: dict[str, str] = {}
+    for concept in root.findall("skos:Concept", NS):
+        cid = concept.get(f"{{{NS['rdf']}}}about")
+        if cid is None:
+            continue
+        pref = concept.find("skos:prefLabel", NS)
+        if pref is not None and pref.text:
+            label[cid] = pref.text.strip()
+        broader = concept.find("skos:broader", NS)
+        if broader is not None:
+            parent[cid] = broader.get(f"{{{NS['rdf']}}}resource")
+
+    def path_of(cid: str) -> str:
+        parts: list[str] = []
+        seen: set[str] = set()
+        cur: str | None = cid
+        while cur is not None and cur in label and cur not in seen:
+            seen.add(cur)
+            parts.append(label[cur])
+            cur = parent.get(cur)
+        return PATH_SEP.join(reversed(parts))
+
+    has_child: set[str] = set(parent.values())
+    entries = [
+        {"path": path_of(cid), "leaf": cid not in has_child}
+        for cid in label
+    ]
+    entries.sort(key=lambda e: e["path"])
+    return entries
+
+
+def _load_cache(cache_path: Path) -> dict[str, str]:
+    if cache_path.exists():
+        return json.loads(cache_path.read_text())
+    return {}
+
+
+def _save_cache(cache_path: Path, cache: dict[str, str]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+
+
+def generate_descriptions(entries: Iterable[dict], llm, model: str,
+                          cache_path: Path) -> list[dict]:
+    cache = _load_cache(cache_path)
+    out: list[dict] = []
+    dirty = False
+    for entry in entries:
+        path = entry["path"]
+        if path in cache:
+            out.append({**entry, "description": cache[path]})
+            continue
+        res = llm.chat(
+            messages=[
+                {"role": "system", "content": DESC_SYSTEM},
+                {"role": "user", "content": f"CCS concept path:\n{path}"},
+            ],
+            model=model,
+        )
+        desc = (res.content or "").strip()
+        cache[path] = desc
+        dirty = True
+        out.append({**entry, "description": desc})
+        if len(cache) % 25 == 0:
+            _save_cache(cache_path, cache)
+    if dirty:
+        _save_cache(cache_path, cache)
+    return out
+
+
+def build(source_xml: Path, out_path: Path, cache_path: Path,
+          llm, model: str) -> None:
+    entries = parse_ccs_tree(source_xml)
+    enriched = generate_descriptions(entries, llm=llm, model=model,
+                                      cache_path=cache_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(enriched, indent=2, ensure_ascii=False))
+
+
+def main(argv=None) -> int:
+    load_dotenv()
+    p = argparse.ArgumentParser()
+    p.add_argument("--source", default="data/ccs_source.xml")
+    p.add_argument("--output", default="data/acm_ccs.json")
+    p.add_argument("--cache", default="data/_ccs_descriptions_cache.json")
+    p.add_argument("--model", default="anthropic/claude-3.5-haiku")
+    args = p.parse_args(argv)
+
+    source = Path(args.source)
+    if not source.is_file():
+        print(f"Source XML not found: {source}", file=sys.stderr)
+        print("Download ACM CCS 2012 SKOS XML and save it to that path.", file=sys.stderr)
+        return 2
+
+    llm = from_env(default_model=args.model)
+    build(source_xml=source, out_path=Path(args.output),
+          cache_path=Path(args.cache), llm=llm, model=args.model)
+    print(f"Wrote {args.output}")
+    return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Run to verify tests pass**
+
+Run: `pytest tests/test_build_acm_ccs.py -v`
+Expected: 3 passed.
+
+- [ ] **Step 6: (Manual, one-off) download ACM CCS 2012 SKOS XML**
+
+Save to `data/ccs_source.xml`. Add `data/ccs_source.xml` and `data/_ccs_descriptions_cache.json` to `.gitignore` so the raw tree + cache stay out of git (the output `data/acm_ccs.json` is committed).
 
 ```bash
-git add data/acm_ccs.json scripts/build_acm_ccs.py
-git commit -m "Add ACM CCS seed dataset and scraper stub"
+# after downloading:
+echo "data/ccs_source.xml" >> .gitignore
+echo "data/_ccs_descriptions_cache.json" >> .gitignore
+```
+
+- [ ] **Step 7: Run the tool once to produce `data/acm_ccs.json`**
+
+```bash
+uv run python scripts/build_acm_ccs.py \
+    --source data/ccs_source.xml \
+    --output data/acm_ccs.json \
+    --cache  data/_ccs_descriptions_cache.json
+```
+
+Expected: completes in a few minutes on first run (one LLM call per concept, batched via cache). Subsequent runs hit the cache and are instant.
+
+- [ ] **Step 8: Verify and commit**
+
+```bash
+python -c "import json; d = json.load(open('data/acm_ccs.json')); print(len(d), 'entries')"
+git add scripts/build_acm_ccs.py tests/test_build_acm_ccs.py tests/fixtures/ccs_sample.xml .gitignore
+git add -f data/acm_ccs.json
+git commit -m "Add ACM CCS data-prep tool and generated taxonomy"
 ```
 
 ---
@@ -597,7 +823,7 @@ git commit -m "Add ACM CCS seed dataset and scraper stub"
 ## Task 5: lookup_acm tool
 
 **Files:**
-- Create: `src/tools/lookup_acm.py`, `tests/test_lookup_acm.py`
+- Create: `paperfb/tools/lookup_acm.py`, `tests/test_lookup_acm.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -607,7 +833,7 @@ Create `tests/test_lookup_acm.py`:
 import json
 from pathlib import Path
 import pytest
-from src.tools.lookup_acm import lookup_acm, load_ccs, TOOL_SCHEMA
+from paperfb.tools.lookup_acm import lookup_acm, load_ccs, TOOL_SCHEMA
 
 
 @pytest.fixture
@@ -661,7 +887,7 @@ def test_load_ccs_from_file(ccs_path):
 Run: `pytest tests/test_lookup_acm.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/tools/lookup_acm.py`**
+- [ ] **Step 3: Implement `paperfb/tools/lookup_acm.py`**
 
 ```python
 import json
@@ -722,7 +948,7 @@ Expected: 6 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/tools/lookup_acm.py tests/test_lookup_acm.py
+git add paperfb/tools/lookup_acm.py tests/test_lookup_acm.py
 git commit -m "Add lookup_acm tool with schema"
 ```
 
@@ -731,7 +957,7 @@ git commit -m "Add lookup_acm tool with schema"
 ## Task 6: Classification Agent
 
 **Files:**
-- Create: `src/agents/classification.py`, `tests/test_classification.py`
+- Create: `paperfb/agents/classification.py`, `tests/test_classification.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -742,7 +968,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
-from src.agents.classification import classify_manuscript, ClassificationResult
+from paperfb.agents.classification import classify_manuscript, ClassificationResult
 
 
 def _msg_with_tool_call(name, args):
@@ -814,13 +1040,13 @@ def test_classify_raises_when_no_classes(tmp_path):
 Run: `pytest tests/test_classification.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/agents/classification.py`**
+- [ ] **Step 3: Implement `paperfb/agents/classification.py`**
 
 ```python
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from src.tools.lookup_acm import lookup_acm, TOOL_SCHEMA
+from paperfb.tools.lookup_acm import lookup_acm, TOOL_SCHEMA
 
 SYSTEM_PROMPT = """You classify a computer-science research manuscript against the ACM Computing Classification System (CCS).
 Rules:
@@ -885,7 +1111,7 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agents/classification.py tests/test_classification.py
+git add paperfb/agents/classification.py tests/test_classification.py
 git commit -m "Add Classification Agent with lookup_acm tool loop"
 ```
 
@@ -894,7 +1120,7 @@ git commit -m "Add Classification Agent with lookup_acm tool loop"
 ## Task 7: Profile sampler (deterministic)
 
 **Files:**
-- Create: `src/agents/profile_sampler.py`, `tests/test_profile_sampler.py`
+- Create: `paperfb/agents/profile_sampler.py`, `tests/test_profile_sampler.py`
 
 This is the meat of the "don't be shallow" design. Test-heavy, pure Python.
 
@@ -904,7 +1130,7 @@ Create `tests/test_profile_sampler.py`:
 
 ```python
 import pytest
-from src.agents.profile_sampler import sample_reviewer_tuples, ReviewerTuple
+from paperfb.agents.profile_sampler import sample_reviewer_tuples, ReviewerTuple
 
 STANCES = ["neutral", "critical", "skeptical", "supportive", "rigorous"]
 FOCUSES = ["methods", "results", "impact", "novelty", "clarity", "reproducibility"]
@@ -991,7 +1217,7 @@ def test_secondary_focus_maximises_coverage():
 Run: `pytest tests/test_profile_sampler.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/agents/profile_sampler.py`**
+- [ ] **Step 3: Implement `paperfb/agents/profile_sampler.py`**
 
 ```python
 import random
@@ -1096,7 +1322,7 @@ Expected: 10 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agents/profile_sampler.py tests/test_profile_sampler.py
+git add paperfb/agents/profile_sampler.py tests/test_profile_sampler.py
 git commit -m "Add deterministic profile sampler with core-focus coverage"
 ```
 
@@ -1105,7 +1331,7 @@ git commit -m "Add deterministic profile sampler with core-focus coverage"
 ## Task 8: Profile Creation Agent (LLM step)
 
 **Files:**
-- Create: `src/agents/profile_creation.py`, `tests/test_profile_creation.py`
+- Create: `paperfb/agents/profile_creation.py`, `tests/test_profile_creation.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1114,8 +1340,8 @@ Create `tests/test_profile_creation.py`:
 ```python
 import json
 from unittest.mock import MagicMock
-from src.agents.profile_creation import create_profiles, ReviewerProfile
-from src.agents.profile_sampler import ReviewerTuple
+from paperfb.agents.profile_creation import create_profiles, ReviewerProfile
+from paperfb.agents.profile_sampler import ReviewerTuple
 
 
 def _final(content):
@@ -1155,12 +1381,12 @@ def test_creates_profile_per_tuple():
 Run: `pytest tests/test_profile_creation.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/agents/profile_creation.py`**
+- [ ] **Step 3: Implement `paperfb/agents/profile_creation.py`**
 
 ```python
 from dataclasses import dataclass
 from typing import Optional
-from src.agents.profile_sampler import ReviewerTuple
+from paperfb.agents.profile_sampler import ReviewerTuple
 
 PERSONA_SYSTEM = """You generate the system prompt for an AI reviewer persona for a research-paper feedback system.
 Given: specialty (ACM CCS class), stance, primary focus, secondary focus — produce the full system prompt that reviewer will use to review a manuscript.
@@ -1222,7 +1448,7 @@ Expected: 1 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agents/profile_creation.py tests/test_profile_creation.py
+git add paperfb/agents/profile_creation.py tests/test_profile_creation.py
 git commit -m "Add Profile Creation Agent LLM step"
 ```
 
@@ -1231,7 +1457,7 @@ git commit -m "Add Profile Creation Agent LLM step"
 ## Task 9: write_review tool
 
 **Files:**
-- Create: `src/tools/write_review.py`, `tests/test_write_review.py`
+- Create: `paperfb/tools/write_review.py`, `tests/test_write_review.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1241,7 +1467,7 @@ Create `tests/test_write_review.py`:
 import json
 from pathlib import Path
 import pytest
-from src.tools.write_review import write_review, TOOL_SCHEMA, ReviewValidationError
+from paperfb.tools.write_review import write_review, TOOL_SCHEMA, ReviewValidationError
 
 
 def _sample_review(rid="r1"):
@@ -1291,7 +1517,7 @@ def test_tool_schema_lists_required_fields():
 Run: `pytest tests/test_write_review.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/tools/write_review.py`**
+- [ ] **Step 3: Implement `paperfb/tools/write_review.py`**
 
 ```python
 import json
@@ -1370,7 +1596,7 @@ Expected: 4 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/tools/write_review.py tests/test_write_review.py
+git add paperfb/tools/write_review.py tests/test_write_review.py
 git commit -m "Add write_review tool with validation"
 ```
 
@@ -1379,7 +1605,7 @@ git commit -m "Add write_review tool with validation"
 ## Task 10: Reviewer Agent
 
 **Files:**
-- Create: `src/agents/reviewer.py`, `tests/test_reviewer.py`
+- Create: `paperfb/agents/reviewer.py`, `tests/test_reviewer.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1390,8 +1616,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
-from src.agents.reviewer import run_reviewer
-from src.agents.profile_creation import ReviewerProfile
+from paperfb.agents.reviewer import run_reviewer
+from paperfb.agents.profile_creation import ReviewerProfile
 
 
 def _tool_call(name, args):
@@ -1457,13 +1683,13 @@ def test_reviewer_invalid_review_retries_then_skips(tmp_path):
 Run: `pytest tests/test_reviewer.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/agents/reviewer.py`**
+- [ ] **Step 3: Implement `paperfb/agents/reviewer.py`**
 
 ```python
 import json
 from pathlib import Path
-from src.agents.profile_creation import ReviewerProfile
-from src.tools.write_review import write_review, TOOL_SCHEMA, ReviewValidationError
+from paperfb.agents.profile_creation import ReviewerProfile
+from paperfb.tools.write_review import write_review, TOOL_SCHEMA, ReviewValidationError
 
 REVIEWER_USER_TEMPLATE = """Manuscript follows between the markers.
 
@@ -1519,7 +1745,7 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/agents/reviewer.py tests/test_reviewer.py
+git add paperfb/agents/reviewer.py tests/test_reviewer.py
 git commit -m "Add Reviewer Agent with write_review tool loop"
 ```
 
@@ -1528,14 +1754,14 @@ git commit -m "Add Reviewer Agent with write_review tool loop"
 ## Task 11: Renderer
 
 **Files:**
-- Create: `src/renderer.py`, `tests/test_renderer.py`
+- Create: `paperfb/renderer.py`, `tests/test_renderer.py`
 
 - [ ] **Step 1: Write the failing test**
 
 Create `tests/test_renderer.py`:
 
 ```python
-from src.renderer import render_report
+from paperfb.renderer import render_report
 
 
 def test_renders_full_report():
@@ -1587,7 +1813,7 @@ def test_no_reviews_graceful():
 Run: `pytest tests/test_renderer.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/renderer.py`**
+- [ ] **Step 3: Implement `paperfb/renderer.py`**
 
 ```python
 from typing import Iterable
@@ -1659,7 +1885,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/renderer.py tests/test_renderer.py
+git add paperfb/renderer.py tests/test_renderer.py
 git commit -m "Add Markdown renderer for final report"
 ```
 
@@ -1668,7 +1894,7 @@ git commit -m "Add Markdown renderer for final report"
 ## Task 12: Orchestrator
 
 **Files:**
-- Create: `src/orchestrator.py`, `tests/test_orchestrator.py`
+- Create: `paperfb/orchestrator.py`, `tests/test_orchestrator.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1681,8 +1907,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 
-from src.orchestrator import run_pipeline, PipelineResult
-from src.config import load_config
+from paperfb.orchestrator import run_pipeline, PipelineResult
+from paperfb.config import load_config
 
 
 @pytest.fixture
@@ -1709,8 +1935,8 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         for i in range(3)
     ]
     # need concrete ReviewerTuple/Profile types for real code path:
-    from src.agents.profile_sampler import ReviewerTuple
-    from src.agents.profile_creation import ReviewerProfile
+    from paperfb.agents.profile_sampler import ReviewerTuple
+    from paperfb.agents.profile_creation import ReviewerProfile
     tuples = [
         ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML", "weight": "High"},
                       stance="critical", primary_focus=["methods", "results", "novelty"][i],
@@ -1751,8 +1977,8 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
 
 
 def test_reviewer_failure_is_skipped(cfg, tmp_path):
-    from src.agents.profile_sampler import ReviewerTuple
-    from src.agents.profile_creation import ReviewerProfile
+    from paperfb.agents.profile_sampler import ReviewerTuple
+    from paperfb.agents.profile_creation import ReviewerProfile
     tuples = [ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML"}, stance="critical",
                              primary_focus=["methods", "results", "novelty"][i],
                              secondary_focus=None) for i in range(3)]
@@ -1789,7 +2015,7 @@ def test_reviewer_failure_is_skipped(cfg, tmp_path):
 Run: `pytest tests/test_orchestrator.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/orchestrator.py`**
+- [ ] **Step 3: Implement `paperfb/orchestrator.py`**
 
 ```python
 import asyncio
@@ -1797,12 +2023,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.config import Config
-from src.agents.classification import classify_manuscript, ClassificationResult
-from src.agents.profile_sampler import sample_reviewer_tuples
-from src.agents.profile_creation import create_profiles
-from src.agents.reviewer import run_reviewer
-from src.renderer import render_report
+from paperfb.config import Config
+from paperfb.agents.classification import classify_manuscript, ClassificationResult
+from paperfb.agents.profile_sampler import sample_reviewer_tuples
+from paperfb.agents.profile_creation import create_profiles
+from paperfb.agents.reviewer import run_reviewer
+from paperfb.renderer import render_report
 
 
 @dataclass
@@ -1887,7 +2113,7 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/orchestrator.py tests/test_orchestrator.py
+git add paperfb/orchestrator.py tests/test_orchestrator.py
 git commit -m "Add orchestrator with sequential pipeline and parallel reviewers"
 ```
 
@@ -1896,7 +2122,7 @@ git commit -m "Add orchestrator with sequential pipeline and parallel reviewers"
 ## Task 13: CLI entry point
 
 **Files:**
-- Create: `src/main.py`, `tests/test_main.py`
+- Create: `paperfb/main.py`, `tests/test_main.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1906,7 +2132,7 @@ Create `tests/test_main.py`:
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from src.main import main
+from paperfb.main import main
 
 
 def test_cli_reads_manuscript_and_writes_report(tmp_path, monkeypatch):
@@ -1919,8 +2145,8 @@ def test_cli_reads_manuscript_and_writes_report(tmp_path, monkeypatch):
     fake_result.skipped = []
     fake_result.reviews = [{"reviewer_id": "r1"}, {"reviewer_id": "r2"}, {"reviewer_id": "r3"}]
 
-    with patch("src.main.asyncio.run", return_value=fake_result), \
-         patch("src.main.from_env", return_value=MagicMock()):
+    with patch("paperfb.main.asyncio.run", return_value=fake_result), \
+         patch("paperfb.main.from_env", return_value=MagicMock()):
         rc = main([
             str(manuscript),
             "--output", str(tmp_path / "report.md"),
@@ -1940,7 +2166,7 @@ def test_cli_missing_manuscript_errors(tmp_path, monkeypatch):
 Run: `pytest tests/test_main.py -v`
 Expected: FAIL (import error).
 
-- [ ] **Step 3: Implement `src/main.py`**
+- [ ] **Step 3: Implement `paperfb/main.py`**
 
 ```python
 import argparse
@@ -1950,9 +2176,9 @@ from dataclasses import replace
 from pathlib import Path
 from dotenv import load_dotenv
 
-from src.config import load_config
-from src.llm_client import from_env
-from src.orchestrator import run_pipeline
+from paperfb.config import load_config
+from paperfb.llm_client import from_env
+from paperfb.orchestrator import run_pipeline
 
 
 def _parse(argv):
@@ -2011,7 +2237,7 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/main.py tests/test_main.py
+git add paperfb/main.py tests/test_main.py
 git commit -m "Add CLI entry point"
 ```
 
@@ -2175,7 +2401,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from dotenv import load_dotenv
 
-from src.llm_client import from_env
+from paperfb.llm_client import from_env
 
 
 JUDGE_SYSTEM = """You are an impartial evaluator of peer-review feedback.
@@ -2321,9 +2547,9 @@ from dataclasses import replace
 from pathlib import Path
 import pytest
 
-from src.config import load_config
-from src.llm_client import from_env
-from src.orchestrator import run_pipeline
+from paperfb.config import load_config
+from paperfb.llm_client import from_env
+from paperfb.orchestrator import run_pipeline
 
 
 pytestmark = pytest.mark.slow
@@ -2420,7 +2646,7 @@ uv sync --extra dev   # creates .venv and installs deps + dev extras
 # BASE_URL for the course proxy is already in .env
 
 # Run it
-uv run python -m src.main path/to/manuscript.md --output report.md
+uv run python -m paperfb path/to/manuscript.md --output report.md
 ```
 
 Add `-n 5` to use 5 reviewers, `--config path/to/your.yaml` to override the config.
@@ -2489,7 +2715,7 @@ Expected: live-proxy acceptance test passes.
 - [ ] **Step 3: Run the system on a real sample and inspect the report**
 
 ```bash
-uv run python -m src.main tests/fixtures/tiny_manuscript.md --output /tmp/report.md
+uv run python -m paperfb tests/fixtures/tiny_manuscript.md --output /tmp/report.md
 cat /tmp/report.md
 ```
 

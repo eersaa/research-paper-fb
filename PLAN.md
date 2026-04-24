@@ -48,7 +48,9 @@ Framework: bare `openai` Python SDK with `base_url` pointed at the proxy, plus a
 
 ## Unresolved questions
 
-- Source of ACM CCS tree (scrape `dl.acm.org/ccs` vs existing dump)?
-- Sample papers for eval (which, how many)?
-- CLI invocation form and flags?
-- Judge rubric weighting (equal vs weighted)?
+_None open. Prior items resolved:_
+
+- ACM CCS source → offline data-prep tool downloads CCS 2012, parses full tree, generates per-node descriptions via LLM (cached), emits `data/acm_ccs.json`. Runs outside the agentic pipeline.
+- Sample papers → 3 well-known, heavily cited arXiv papers covering distinct areas (ML, systems, plus one HCI/theory/security). Chosen during eval run, not pinned in docs.
+- CLI → `uv run python -m paperfb <manuscript.md>`; only manuscript path required; all other flags optional.
+- Judge rubric → equal weighting across 5 Likert dimensions; report per-dimension + arithmetic mean.

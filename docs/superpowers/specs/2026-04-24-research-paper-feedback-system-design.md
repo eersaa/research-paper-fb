@@ -135,10 +135,14 @@ Pure code. Reads all `reviews/*.json` + classification output + profile metadata
 - Per-reviewer section: profile blurb → strengths / weaknesses / suggestions / section notes / overall.
 - No cross-reviewer synthesis in v1.
 
-### 4.5 Data prep script (`scripts/build_acm_ccs.py`, offline, one-time)
+### 4.5 Data prep tool (`scripts/build_acm_ccs.py`, offline, one-time)
 
-- Produces `data/acm_ccs.json` — list of `{path, leaf, description}`.
-- Descriptions auto-generated via a one-off LLM call per node when not directly available from ACM. Cached to disk so this runs once.
+Runs outside the agentic pipeline as a preparation step.
+
+- Fetches the ACM CCS 2012 tree (source: ACM's official structured dump of the CCS classification).
+- Parses the full tree (not a seed subset) into a flat list.
+- For each node, generates a 1–2 sentence description via an LLM call through the proxy. Descriptions are cached to disk (`data/_ccs_descriptions_cache.json`) so reruns of the prep tool are cheap and deterministic.
+- Emits `data/acm_ccs.json` — list of `{path, leaf, description}` entries consumed by `lookup_acm`.
 
 ## 5. Axis vocabularies (default, configurable via `config/axes.yaml`)
 
@@ -221,10 +225,13 @@ Report per-run token totals and USD cost (proxy returns `usage.cost`) at end of 
 
 ```
 research-paper-fb/
-├── src/
+├── paperfb/
+│   ├── __main__.py                 # enables `python -m paperfb <manuscript.md>`
+│   ├── main.py                     # CLI entry point
 │   ├── agents/
 │   │   ├── classification.py
 │   │   ├── profile_creation.py
+│   │   ├── profile_sampler.py
 │   │   └── reviewer.py
 │   ├── tools/
 │   │   ├── lookup_acm.py
@@ -262,7 +269,7 @@ research-paper-fb/
 - **Python version:** pinned to 3.11 via [mise](https://mise.jdx.dev/) using a `.mise.toml` at repo root.
 - **Package + virtualenv manager:** [uv](https://docs.astral.sh/uv/). `uv sync` creates `.venv` and installs all runtime + dev deps from `pyproject.toml`. `uv.lock` committed for reproducible installs.
 - **Bootstrap (fresh clone):** `mise install && uv sync`. mise installs both the pinned Python and uv itself, so no prior tooling beyond mise is required on the host.
-- **Running commands:** `uv run pytest`, `uv run python -m src.main ...` — or activate `.venv` manually. mise can also expose `pytest`/`python` directly when `_.python.venv` is configured.
+- **Running commands:** `uv run pytest`, `uv run python -m paperfb ...` — or activate `.venv` manually. mise can also expose `pytest`/`python` directly when `_.python.venv` is configured.
 
 ## 12. Testing strategy
 
@@ -283,7 +290,11 @@ research-paper-fb/
 
 ## 14. Unresolved questions
 
-- Source of ACM CCS tree — scrape from `dl.acm.org/ccs` or locate an existing structured dump?
-- Sample paper set for eval — which arXiv papers, how many?
-- CLI UX — invocation form and flags?
-- Judge rubric — equal weighting of dimensions, or weighted aggregate?
+_All resolved._
+
+Prior items:
+
+- ACM CCS source — resolved. Offline data-prep tool fetches ACM's CCS 2012 structured dump, parses full tree, generates per-node descriptions via LLM (cached). See §4.5.
+- Sample papers — resolved. 3 well-known, heavily cited arXiv papers covering distinct areas (default: one ML, one systems, one HCI / theory / security). Titles chosen at eval time.
+- CLI UX — resolved. `uv run python -m paperfb <manuscript.md>`; only manuscript path required; all other flags optional.
+- Judge rubric weighting — resolved. Equal weighting across 5 Likert dimensions; report per-dimension scores + arithmetic mean.
