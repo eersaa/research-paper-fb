@@ -8,7 +8,7 @@ Full design: [docs/superpowers/specs/2026-04-24-research-paper-feedback-system-d
 
 1. User provides manuscript (markdown, v1).
 2. **Classification Agent** tags the manuscript with ACM CCS classes using `lookup_acm` tool over `data/acm_ccs.json`.
-3. **Profile Creation Agent** samples N distinct (stance, focus) pairs and generates a reviewer persona for each.
+3. **Profile Creation Agent** samples N reviewer tuples `(specialty from ACM classes, stance, primary_focus, secondary_focus)` and generates a persona for each. Core focuses (`methods, results, novelty`) always covered.
 4. **Reviewer Agents** (N in parallel) each produce a review JSON via `write_review` tool.
 5. **Renderer** (pure code) compiles all review JSONs into `final_report.md`.
 
@@ -24,8 +24,9 @@ Separate evaluation harness: **Judge Agent** scores reports on specificity, acti
 
 - **Input:** markdown only (v1). PDF/vision future work.
 - **State:** stateless across runs. Shared-context memory future work.
-- **N reviewers:** default 3, configurable. Diversity constraint: no two reviewers share both axes.
-- **Axes:** configurable in `config/axes.yaml`. Defaults cover 8 stances × 8 focuses.
+- **N reviewers:** default 3, configurable. Diversity constraint: `(stance, primary_focus)` unique across reviewers.
+- **Persona formula:** `specialty (from ACM classes, round-robin across reviewers) + stance + primary_focus + secondary_focus`. Core focuses always covered.
+- **Axes:** configurable in `config/axes.yaml`. Defaults cover 8 stances × 8 focuses; 3 core focuses.
 - **ACM tool:** deterministic JSON lookup over a prebuilt CCS dump, not embeddings.
 - **Transport:** OpenAI `/chat/completions` via the provided proxy — routes to any course-recommended text model (Claude Haiku, GPT-4.1-mini, Gemini Flash).
 - **Default model:** `anthropic/claude-3.5-haiku`; judge uses a different model for bias mitigation.

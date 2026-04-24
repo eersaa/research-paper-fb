@@ -67,17 +67,41 @@ Target user: researcher. Non-goals: does not rewrite the paper; does not use pri
 
 ### 4.2 Profile Creation Agent (Unit 2)
 
+**Persona formula:**
+
+```
+persona = specialty(from ACM classes) + stance + primary_focus + secondary_focus
+```
+
+- **Specialty** is the foundation — grounds the reviewer as a real domain expert (e.g. "reviewer specializing in distributed fault-tolerant systems"), derived from an ACM CCS class path produced by Unit 1. This is what the sketch in `Process-and-agent-units.png` calls "base version creates profiles based on ACM classes."
+- **Stance + focuses** are the modulation — how this specialist approaches the paper. What the sketch calls "add some variation."
+
 Two-phase hybrid:
 
-1. **Deterministic sampler (Python).** Picks N pairs from (stance × focus) under constraint "no two reviewers share both axes; ideally differ on both." Reproducible via config-settable seed.
-2. **LLM step.** For each sampled pair + ACM classes, produce a concrete reviewer persona: specialist background, voice, 1-paragraph self-description, review rubric.
+1. **Deterministic sampler (Python).** Produces N tuples `(specialty_class, stance, primary_focus, secondary_focus)`. Reproducible via config-settable seed.
+2. **LLM step.** For each sampled tuple, produce a concrete reviewer persona: specialist background grounded in the ACM class description, voice shaped by stance, review rubric emphasising primary focus with secondary focus as supplementary lens. Output is a full system prompt for that reviewer.
 
-- **Input:** ACM classes from Unit 1, config (N, axis vocabularies, seed).
+**Sampler algorithm:**
+
+1. Sort ACM classes by weight (High → Medium → Low).
+2. For each reviewer `r_i` (i in 0..N-1):
+   - `specialty = acm_classes[i % len(acm_classes)]` — round-robin with cycling when N > number of classes, so higher-weight classes get reused first. If only one class exists, all reviewers share specialty but differ on the other axes.
+   - `primary_focus` — first K=|core_focuses| reviewers get each core focus in order; remaining reviewers draw randomly from the full focus pool.
+   - `secondary_focus` — drawn to maximise unused focuses across the board (greedy coverage heuristic), distinct from the reviewer's own primary.
+   - `stance` — drawn from stance pool under the constraint that `(stance, primary_focus)` is unique across the board. Neutral stance allowed.
+
+**Diversity constraint:** no two reviewers share the same `(stance, primary_focus)` pair. Secondary focus is allowed to overlap — it is a depth dimension, not an identity dimension. With default N=3 and core focuses `[methods, results, novelty]`, the three primary focuses are guaranteed distinct and the three stances are effectively distinct too.
+
+- **Input:** ACM classes from Unit 1, config (N, axis vocabularies, core focuses, seed).
 - **Output:**
   ```json
   {
     "reviewers": [
-      {"id": "r1", "stance": "...", "focus": "...",
+      {"id": "r1",
+       "specialty": "<ACM class path>",
+       "stance": "...",
+       "primary_focus": "...",
+       "secondary_focus": "...",
        "persona_prompt": "<full system prompt for reviewer r1>"}
     ]
   }
@@ -122,7 +146,11 @@ Pure code. Reads all `reviews/*.json` + classification output + profile metadata
 
 **Focuses:** `methods, results, impact, novelty, clarity, related-work, reproducibility, ethics`.
 
-Extensible without code changes. Sampler operates on whatever values are in the config.
+**Core focuses (must be covered on every board):** `methods, results, novelty`. Sampler guarantees each core focus is assigned as some reviewer's primary focus when N ≥ |core_focuses|.
+
+Specialty is NOT an axis vocabulary — it is derived per run from the ACM classes produced by Unit 1.
+
+All three lists are extensible without code changes. Sampler operates on whatever values are in the config.
 
 ## 6. Configuration (`config/default.yaml`)
 
@@ -137,7 +165,9 @@ models:
   judge: openai/gpt-4.1-mini          # different from reviewers to reduce self-preference bias
 reviewers:
   count: 3                             # minimum 3, configurable up
-  diversity: strict                    # differ on both axes when feasible
+  core_focuses: [methods, results, novelty]   # always covered when N >= len(core_focuses)
+  secondary_focus_per_reviewer: true   # set false for v1-lite (single focus per reviewer)
+  diversity: strict                    # (stance, primary_focus) unique across reviewers
   seed: null                           # optional, for reproducibility
 classification:
   max_classes: 5
