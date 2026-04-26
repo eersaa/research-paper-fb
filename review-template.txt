@@ -1,0 +1,63 @@
+======= Regular review 1 =======
+> *** Relevance and Timeliness: Rate the importance and timeliness of the topic addressed in the paper within its area of research.
+Good. (4)
+> *** Technical Content and Scientific Rigour: Rate the technical content of the paper (e.g.: completeness of the analysis or simulation study, thoroughness of the treatise, accuracy of the models, etc.), its soundness and scientific rigour.
+Valid work but limited contribution. (3)
+> *** Novelty and Originality: Rate the novelty and originality of the ideas or results presented in the paper.
+Significant original work and novel results. (4)
+> *** Quality of Presentation: Rate the paper organisation, the quality of text, English writing, figures and the completeness and accuracy of references.
+Well written. (4)
+> *** Overall recommendation: What is your overall recommendation for the paper?
+Strong accept. (5)
+> *** Strong Aspects: Comments to the author: What are the strong aspects of the paper?
+Authors presented very interesting results according to the prediction of train delays using weather datasets and machine learning approach. In my opinion, current form of the article is well described and investigated.
+> *** Weak Aspects: Comments to the author: What are the weak aspects of the paper?
+There are no weak aspects of the paper in the current form. At least I am not seeing anything important in that particular research!
+> *** Recommended Changes: Recommended changes. Please indicate any changes that should be made to the paper if accepted.
+I wouldn't recommend changes, however - correlation coefficient is only one of the statistical approach for feature selection - in future You could also confirm it's sensitivity and correctness of the selection for other metrics too.
+
+======= Regular review 2 =======
+> *** Relevance and Timeliness: Rate the importance and timeliness of the topic addressed in the paper within its area of research.
+Good. (4)
+> *** Technical Content and Scientific Rigour: Rate the technical content of the paper (e.g.: completeness of the analysis or simulation study, thoroughness of the treatise, accuracy of the models, etc.), its soundness and scientific rigour.
+Valid work but limited contribution. (3)
+> *** Novelty and Originality: Rate the novelty and originality of the ideas or results presented in the paper.
+Some interesting ideas and results on a subject well investigated. (3)
+> *** Quality of Presentation: Rate the paper organisation, the quality of text, English writing, figures and the completeness and accuracy of references.
+Readable, but revision is needed in some parts. (3)
+> *** Overall recommendation: What is your overall recommendation for the paper?
+Borderline. (3)
+> *** Strong Aspects: Comments to the author: What are the strong aspects of the paper?
+Relevant problem, as predicting weather-related disruptions can support improved reliability and planning in transportation systems.
+Integration of a large-scale dataset combining railway operational records with meteorological observations across multiple years.
+The hierarchical weather classification system converting raw meteorological variables into operational hazard categories is a useful domain-informed idea that may improve interpretability and feature stability.
+> *** Weak Aspects: Comments to the author: What are the weak aspects of the paper?
+The experimental evaluation being restricted to a single station limits conclusions about generalizability across the broader railway network.
+There is also a lack of baseline comparisons against alternative machine learning models or simple heuristic predictors.
+Weather hazard thresholds are not fully justified relative to established meteorological literature.
+Figure 3 is difficult to follow due to its placement in the document.
+> *** Recommended Changes: Recommended changes. Please indicate any changes that should be made to the paper if accepted.
+Expand the evaluation to include multiple stations to better demonstrate the generalizability.
+Include comparisons with other models to better assess the model's relative performance.
+Improve the justification of the thresholds used for defining the weather hazard categories.
+Improve the layout of Figure 3 to make it easier to follow.
+
+======= Regular review 3 =======
+> *** Relevance and Timeliness: Rate the importance and timeliness of the topic addressed in the paper within its area of research.
+Little. (2)
+> *** Technical Content and Scientific Rigour: Rate the technical content of the paper (e.g.: completeness of the analysis or simulation study, thoroughness of the treatise, accuracy of the models, etc.), its soundness and scientific rigour.
+Marginal work and simple contribution. Some flaws. (2)
+> *** Novelty and Originality: Rate the novelty and originality of the ideas or results presented in the paper.
+Minor variations on a well investigated subject. (2)
+> *** Quality of Presentation: Rate the paper organisation, the quality of text, English writing, figures and the completeness and accuracy of references.
+Well written. (4)
+> *** Overall recommendation: What is your overall recommendation for the paper?
+Strong reject. (1)
+> *** Strong Aspects: Comments to the author: What are the strong aspects of the paper?
+It is always nice to have data-science papers grounded in actual, non-trivial data sets. The paper does deliver on that aspect.
+> *** Weak Aspects: Comments to the author: What are the weak aspects of the paper?
+Crucially: this paper has nothing to do with the conference. Why submit it to a 6G conference at all?
+Method-wise, the paper is a pretty straightforward feature selection and prediction model training approach. Nothing that really stands out or gives any concrete new insights.
+Also, it wasn't clear to me how you separated training and test data sets?
+> *** Recommended Changes: Recommended changes. Please indicate any changes that should be made to the paper if accepted.
+The biggest recommendation is to look for a data-science conference.

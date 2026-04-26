@@ -8,6 +8,8 @@ Give a researcher constructive feedback on a manuscript by running it through a 
 
 Target user: researcher. Non-goals: does not rewrite the paper; does not use private papers as knowledge.
 
+The runtime pipeline ingests **markdown only**. PDF source manuscripts are converted to markdown ahead of time via an offline ingestion tool (§4.6); three published papers in this field whose ACM classifications are publicly known are converted and stored under `samples/` for evaluation.
+
 ## 2. Requirements mapping
 
 - **≥3 agents** — Classification Agent, Profile Creation Agent, Reviewer Agent (×N, default N=3). An additional Judge Agent lives in a separate evaluation harness.
@@ -16,19 +18,29 @@ Target user: researcher. Non-goals: does not rewrite the paper; does not use pri
 
 ## 3. Architecture
 
+Offline preparation (run once, outputs committed under `data/` and `samples/`):
+
+```
+[ACM CCS XML dump] ──► scripts/build_acm_ccs.py        ──► data/acm_ccs.json
+[Finnish nameday calendar] ──► scripts/build_finnish_names.py ──► data/finnish_names.json
+[paper.pdf]      ──► scripts/pdf_to_markdown.py        ──► samples/<id>/manuscript.md
+```
+
+Runtime (per Run):
+
 ```
 [markdown manuscript]
        │
        ▼
 ┌───────────────────┐   tool: lookup_acm(query) → matching CCS paths
 │ 1. Classification │◄─────── data/acm_ccs.json (prepared offline)
-│     Agent         │
+│     Agent         │   keyword extraction → tool queries → class selection
 └───────────────────┘
-       │ {acm_classes: [...]}
+       │ {keywords, classes}
        ▼
 ┌───────────────────┐   deterministic sampler: pick N distinct
-│ 2. Profile        │   (stance, focus) pairs  → N persona prompts
-│    Creation Agent │
+│ 2. Profile        │   (stance, focus) tuples + Finnish names → N persona prompts
+│    Creation Agent │◄─────── data/finnish_names.json
 └───────────────────┘
        │ {reviewers: [persona_1, ..., persona_N]}
        ▼
@@ -51,11 +63,20 @@ Target user: researcher. Non-goals: does not rewrite the paper; does not use pri
 ### 4.1 Classification Agent (Unit 1)
 
 - **Input:** manuscript markdown.
-- **Job:** identify 2–5 most relevant ACM CCS concept paths with High/Medium/Low weights per ACM convention.
-- **Tool:** `lookup_acm(query: str, k: int = 10)` — keyword/substring search over `data/acm_ccs.json`, returns matching concept paths with their descriptions. Agent may call multiple times with different candidate terms.
-- **Output:**
+- **Job (single agent loop, two phases):**
+  1. **Keyword extraction.** Produce a list of CCS-relevant candidate keywords. Source order:
+     - explicit `Keywords:` / `Index Terms:` block in the manuscript (high precedence);
+     - synthesised terms drawn from title, abstract, and section headings when the explicit block is missing or sparse — terms a domain expert would expect to land in the CCS taxonomy.
+     The two sources are tracked separately on the output so reviewers (and the Judge) can see what was extracted vs. synthesised.
+  2. **Class selection.** Drive `lookup_acm` queries from those keywords, then pick 2–5 most relevant CCS concept paths with `High`/`Medium`/`Low` weights per ACM convention. The original "reason about candidate terms before calling the tool" loop is retained on top — keywords seed the queries but the agent may issue additional exploratory queries from its own reasoning.
+- **Tool:** `lookup_acm(query: str, k: int = 10)` — keyword/substring search over `data/acm_ccs.json`, returns matching concept paths with their descriptions. Agent calls it multiple times with different candidate terms.
+- **Agent's full JSON output (logged for auditing / judge):**
   ```json
   {
+    "keywords": {
+      "extracted_from_paper": ["..."],
+      "synthesised":          ["..."]
+    },
     "classes": [
       {"path": "Computing methodologies → Machine learning → ...",
        "weight": "High",
@@ -63,16 +84,19 @@ Target user: researcher. Non-goals: does not rewrite the paper; does not use pri
     ]
   }
   ```
-- **Prompt focus:** ACM CCS guidance rules (prefer leaf nodes, use weights), reason about candidate terms before calling the tool.
+
+- **Downstream contract (`ClassificationResult` consumed by Profile Creation):** unchanged from v0 — only `classes` is propagated. The keyword block is internal: it shapes tool queries and is logged/visible to the Judge, but does not flow to Profile Creation or to Reviewer prompts.
+- **Prompt focus:** ACM CCS guidance rules (prefer leaf nodes, use weights); make keyword extraction explicit before any tool call; reason about candidate terms before each tool call.
 
 ### 4.2 Profile Creation Agent (Unit 2)
 
 **Persona formula:**
 
 ```
-persona = specialty(from ACM classes) + stance + primary_focus + secondary_focus
+persona = name(Finnish given name) + specialty(from ACM classes) + stance + primary_focus + secondary_focus
 ```
 
+- **Name** is a relatability touch — a traditional Finnish given name pulled from the Finnish nameday calendar (`data/finnish_names.json`). Surfaced in the persona prompt and in the rendered review header.
 - **Specialty** is the foundation — grounds the reviewer as a real domain expert (e.g. "reviewer specializing in distributed fault-tolerant systems"), derived from an ACM CCS class path produced by Unit 1. This is what the sketch in `Process-and-agent-units.png` calls "base version creates profiles based on ACM classes."
 - **Stance + focuses** are the modulation — how this specialist approaches the paper. What the sketch calls "add some variation."
 
@@ -89,20 +113,23 @@ Two-phase hybrid:
    - `primary_focus` — first K=|core_focuses| reviewers get each core focus in order; remaining reviewers draw randomly from the full focus pool.
    - `secondary_focus` — drawn to maximise unused focuses across the board (greedy coverage heuristic), distinct from the reviewer's own primary.
    - `stance` — drawn from stance pool under the constraint that `(stance, primary_focus)` is unique across the board. Neutral stance allowed.
+   - `name` — drawn at random (sampler seed) from `data/finnish_names.json`, no repeats across the board (sampler aborts and resamples if the names list is smaller than N — `len(names) >= N` is enforced).
 
-**Diversity constraint:** no two reviewers share the same `(stance, primary_focus)` pair. Secondary focus is allowed to overlap — it is a depth dimension, not an identity dimension. With default N=3 and core focuses `[methods, results, novelty]`, the three primary focuses are guaranteed distinct and the three stances are effectively distinct too.
+**Diversity constraint:** no two reviewers share the same `(stance, primary_focus)` pair. Secondary focus is allowed to overlap — it is a depth dimension, not an identity dimension. **Name** is independently unique across the board but is not part of the identity tuple — two boards may reuse the same names across runs. With default N=3 and core focuses `[methods, results, novelty]`, the three primary focuses are guaranteed distinct and the three stances are effectively distinct too.
 
 - **Input:** ACM classes from Unit 1, config (N, axis vocabularies, core focuses, seed).
 - **Output:**
+
   ```json
   {
     "reviewers": [
       {"id": "r1",
+       "name": "Aino",
        "specialty": "<ACM class path>",
        "stance": "...",
        "primary_focus": "...",
        "secondary_focus": "...",
-       "persona_prompt": "<full system prompt for reviewer r1>"}
+       "persona_prompt": "<full system prompt for reviewer r1, addresses the reviewer by name>"}
     ]
   }
   ```
@@ -111,38 +138,72 @@ Two-phase hybrid:
 
 - **Input:** manuscript markdown + own persona prompt. (ACM classes are NOT passed separately — they are already baked into the persona prompt.)
 - **Tool:** `write_review(reviewer_id, review_json)` — writes to `reviews/<reviewer_id>.json`. One file per reviewer; concurrency-safe.
-- **Review JSON schema:**
+- **Review JSON schema** (mirrors `review-template.txt`, an IEEE-style conference reviewing form — five 1–5 ratings each with a descriptor label, plus three free-text aspects as single strings):
+
   ```json
   {
-    "reviewer_id": "...",
+    "reviewer_id": "r1",
+    "reviewer_name": "Aino",
+    "specialty": "...",
     "stance": "...",
-    "focus": "...",
+    "primary_focus": "...",
+    "secondary_focus": "...",
     "profile_summary": "...",
-    "strengths": ["..."],
-    "weaknesses": ["..."],
-    "suggestions": ["..."],
-    "section_comments": [{"section": "...", "comment": "..."}],
-    "overall_assessment": "..."
+    "ratings": {
+      "relevance_and_timeliness":     {"score": 4, "label": "Good"},
+      "technical_content_and_rigour": {"score": 3, "label": "Valid work but limited contribution"},
+      "novelty_and_originality":      {"score": 4, "label": "Significant original work and novel results"},
+      "quality_of_presentation":      {"score": 4, "label": "Well written"},
+      "overall_recommendation":       {"score": 4, "label": "Accept"}
+    },
+    "strong_aspects":      "...",
+    "weak_aspects":        "...",
+    "recommended_changes": "..."
   }
   ```
-- **Prompt focus:** stay in persona; ground comments in actual manuscript text; never rewrite the paper (non-goal).
+
+- **Rating dimensions** map 1:1 onto the IEEE-style template fields. `score` is integer 1–5; `label` is the descriptor for that score on that dimension. The full canonical descriptor table is partially captured in `review-template.txt` and is otherwise treated as an open follow-up (see §14) — the agent emits the descriptor that best fits the score, falling back to `null` when the canonical wording is unknown.
+- **Prompt focus:** stay in persona; ground comments in actual manuscript text; never rewrite the paper (non-goal); use the persona's assigned Finnish given name when self-referencing.
 
 ### 4.4 Renderer (not an agent)
 
 Pure code. Reads all `reviews/*.json` + classification output + profile metadata. Emits `final_report.md`:
 
 - Header: assigned ACM classes.
-- Per-reviewer section: profile blurb → strengths / weaknesses / suggestions / section notes / overall.
+- Per-reviewer section: header line `## Review by {reviewer_name} — {specialty}` (Finnish given name surfaced for relatability), one-line profile blurb (stance + primary/secondary focus), a five-row ratings table (`{dimension} | {score}/5 | {label}`), then the three free-text aspects (strong / weak / recommended changes).
 - No cross-reviewer synthesis in v1.
 
-### 4.5 Data prep tool (`scripts/build_acm_ccs.py`, offline, one-time)
+### 4.5 Offline data preparation tools
 
-Runs outside the agentic pipeline as a preparation step.
+Three offline scripts produce committed inputs the runtime pipeline reads. All run outside the agentic pipeline.
+
+#### 4.5.1 ACM CCS dump (`scripts/build_acm_ccs.py`)
 
 - Fetches the ACM CCS 2012 tree (source: ACM's official structured dump of the CCS classification).
 - Parses the full tree (not a seed subset) into a flat list.
 - For each node, generates a 1–2 sentence description via an LLM call through the proxy. Descriptions are cached to disk (`data/_ccs_descriptions_cache.json`) so reruns of the prep tool are cheap and deterministic.
 - Emits `data/acm_ccs.json` — list of `{path, leaf, description}` entries consumed by `lookup_acm`.
+
+#### 4.6 Manuscript ingestion: PDF → markdown (`scripts/pdf_to_markdown.py`)
+
+- **Purpose:** convert PDF source manuscripts to markdown ahead of time so the runtime pipeline keeps its single-input contract (markdown only). Three published papers in this field with publicly known ACM classifications are converted up front and stored under `samples/<paper-id>/manuscript.md` for evaluation.
+- **Library:** `pymupdf4llm` as the v1 default — text-first, low setup cost, good enough for the body text the reviewers reason over. Tables come through best-effort; replacing the backend with `marker` is a future swap if quality blocks evaluation.
+- **CLI:** `uv run python scripts/pdf_to_markdown.py <input.pdf> <output.md>`.
+- **Scope:** strictly offline. The runtime CLI (`python -m paperfb`) does NOT auto-invoke this tool when handed a `.pdf` — it expects markdown.
+- **Sample layout:** for each evaluation paper, `samples/<paper-id>/` contains `manuscript.md` and `expected_acm_classes.json` (ground-truth classification published with the paper) — both committed. `manuscript.pdf` lives alongside on disk but is **gitignored** (redistribution / size hygiene); contributors regenerate the markdown locally with the prep tool. The Judge harness compares the agentic system's output against the committed fixtures.
+
+#### 4.7 Finnish names list (`scripts/build_finnish_names.py`)
+
+- **Purpose:** produce `data/finnish_names.json` — the curated pool the Profile Creation sampler draws Reviewer names from.
+- **Source:** the Finnish nameday calendar (e.g. Yliopiston almanakka tradition). First names only. Stored as a flat list of strings, committed to the repo, no fetch at runtime.
+- **Pool size & balance:** ≥50 names, balanced ~50/50 male/female so the gender mix on any Board is roughly even regardless of seed. The script asserts both invariants on output.
+- **Output schema:**
+
+  ```json
+  ["Aino", "Toivo", "Eero", "Kerttu", "..."]
+  ```
+
+- **Rerun behaviour:** the script is run rarely (once at setup, again only if the list needs to grow). Output is deterministic and committed; runtime never refetches.
 
 ## 5. Axis vocabularies (default, configurable via `config/axes.yaml`)
 
@@ -177,6 +238,8 @@ classification:
   max_classes: 5
 paths:
   acm_ccs: data/acm_ccs.json
+  finnish_names: data/finnish_names.json
+  samples_dir: samples/
   reviews_dir: reviews/
   output: final_report.md
   logs_dir: logs/
@@ -219,7 +282,7 @@ Judge feature is built **test-first**: fixtures of known-good and known-bad revi
 
 ## 10. Cost reporting
 
-Report per-run token totals and USD cost (proxy returns `usage.cost`) at end of run. Logged, not gating.
+Report **global** per-run totals only — input/output/total tokens and USD cost (proxy returns `usage.cost`) — at end of run. No per-agent breakdown in v1. Logged, not gating.
 
 ## 11. Project structure
 
@@ -252,12 +315,20 @@ research-paper-fb/
 │           └── tools.py            # write_review — agent-private tool (private)
 ├── scripts/
 │   ├── build_acm_ccs.py
+│   ├── build_finnish_names.py
+│   ├── pdf_to_markdown.py
 │   └── judge.py
 ├── config/
 │   ├── default.yaml
 │   └── axes.yaml
 ├── data/
-│   └── acm_ccs.json
+│   ├── acm_ccs.json
+│   └── finnish_names.json
+├── samples/                        # 3 published-with-CCS papers, prepared offline
+│   └── <paper-id>/
+│       ├── manuscript.md
+│       ├── manuscript.pdf          # gitignored — not committed
+│       └── expected_acm_classes.json
 ├── tests/
 │   ├── agents/
 │   │   ├── classification/
@@ -275,6 +346,8 @@ research-paper-fb/
 │   ├── test_orchestrator.py
 │   ├── test_renderer.py
 │   ├── test_build_acm_ccs.py
+│   ├── test_build_finnish_names.py
+│   ├── test_pdf_to_markdown.py
 │   ├── test_judge.py
 │   └── test_acceptance_live.py     # @pytest.mark.slow
 ├── samples/                        # arXiv papers for eval
@@ -316,28 +389,62 @@ This layout lets two developers work on different agents in parallel with no fil
 
 ## 12. Testing strategy
 
-- **Unit:** sampler (diversity guarantee), `lookup_acm` (deterministic), renderer (pure function), config loader.
-- **Integration with mocked LLM:** orchestrator end-to-end with stubbed `llm_client`; verifies wiring, concurrency, error paths (skipped reviewer), tool-call round-trips.
+- **Unit:** sampler (diversity guarantee + Finnish-name uniqueness), `lookup_acm` (deterministic), renderer (pure function — ratings table + name header), config loader.
+- **Integration with mocked LLM:** orchestrator end-to-end with stubbed `llm_client`; verifies wiring, concurrency, error paths (skipped reviewer), tool-call round-trips. Includes a Classification test that asserts the keyword-extraction phase runs and is logged but does NOT show up in the `ClassificationResult` passed downstream.
+- **Offline data prep:** `pdf_to_markdown.py` smoke test on a tiny fixture PDF (asserts non-empty markdown body, headings preserved). `build_finnish_names.py` test asserts deterministic output and a minimum pool size (`>= reviewers.count`).
 - **TDD for judge:** fixtures of good/bad reviews; score bounds per dimension; implementation satisfies them.
-- **Acceptance test (live proxy, `@pytest.mark.slow`):** tiny manuscript fixture, end-to-end run. Asserts: `final_report.md` exists; per-reviewer sections match N; ACM classes present; reviewer stances distinct per diversity rule; no manuscript text leaks to stdout or logs. Excluded from default `pytest`, included via `pytest -m slow`. Runs in CI on demand only (cost).
+- **Acceptance test (live proxy, `@pytest.mark.slow`):** tiny manuscript fixture, end-to-end run. Asserts: `final_report.md` exists; per-reviewer sections match N; ACM classes present; reviewer stances distinct per diversity rule; reviewer names distinct and drawn from `data/finnish_names.json`; no manuscript text leaks to stdout or logs. Excluded from default `pytest`, included via `pytest -m slow`. Runs in CI on demand only (cost).
 
 ## 13. Out of scope / future work
 
 - RAG over external corpora (arXiv, OpenResearch).
 - Cross-run memory / adaptability.
-- PDF and vision input.
+- PDF as runtime input — converted offline via `scripts/pdf_to_markdown.py` (§4.6); the runtime CLI still consumes only markdown. Vision input remains out of scope.
 - Human-in-the-loop.
 - Reviewer tools beyond `write_review` (e.g. related-paper retrieval).
 - Synthesis agent that merges reviews into a chair report.
 - Embeddings-based ACM classification (current taxonomy is small enough for deterministic lookup).
+- Stronger PDF backends (`marker`, `docling`) — swap once `pymupdf4llm` text fidelity becomes the bottleneck.
 
 ## 14. Unresolved questions
 
-_All resolved._
+Open:
 
-Prior items:
+- **EDAS rubric capture.** Form identified as EuCNC & 6G Summit EDAS reviewer form. Verbatim 1–5 descriptor labels (13 of 25 cells) not publicly indexed — locked behind authenticated EDAS. Need a TPC-access screenshot or saved review HTML to fill the table. Tracked as a follow-up task in the implementation plan; until done, the agent emits `null` for unknown-cell labels.
+- **Sample papers — concrete picks.** 3 papers in this field with publicly published ACM CCS classifications. User will source titles + DOIs and prepare them through the ingestion tool.
+- **`pymupdf4llm` table fidelity on the chosen samples.** v1 uses it as default; if extracted markdown loses critical tables on any of the 3 samples, swap-in `marker` becomes a follow-up.
 
-- ACM CCS source — resolved. Offline data-prep tool fetches ACM's CCS 2012 structured dump, parses full tree, generates per-node descriptions via LLM (cached). See §4.5.
-- Sample papers — resolved. 3 well-known, heavily cited arXiv papers covering distinct areas (default: one ML, one systems, one HCI / theory / security). Titles chosen at eval time.
-- CLI UX — resolved. `uv run python -m paperfb <manuscript.md>`; only manuscript path required; all other flags optional.
-- Judge rubric weighting — resolved. Equal weighting across 5 Likert dimensions; report per-dimension scores + arithmetic mean.
+Prior items (resolved):
+
+- ACM CCS source — Offline data-prep tool fetches ACM's CCS 2012 structured dump, parses full tree, generates per-node descriptions via LLM (cached). See §4.5.1.
+- CLI UX — `uv run python -m paperfb <manuscript.md>`; only manuscript path required; all other flags optional. Markdown only at the runtime boundary; PDFs are converted offline (§4.6).
+- Judge rubric weighting — Equal weighting across 5 Likert dimensions; report per-dimension scores + arithmetic mean.
+- Manuscript ingestion — PDF→markdown handled offline via `scripts/pdf_to_markdown.py` (default backend `pymupdf4llm`). See §4.6.
+- Reviewer relatability — Profile Creation sampler picks a unique Finnish given name per reviewer from `data/finnish_names.json`; name surfaces in persona prompt and rendered review header. See §4.2, §4.4, §4.7.
+- Keyword extraction — embedded in the Classification agent loop; logged but not propagated downstream. `ClassificationResult` contract unchanged. See §4.1.
+- Reviewer output schema — mirrors `review-template.txt` (5 numeric ratings + 3 free-text aspects as single strings); `section_comments` dropped in v1.
+- Implementation phasing — Judge harness and cost / token-usage reporting are the LAST features built. Earlier tasks may include thin logging hooks but not aggregation. See §15.
+
+## 15. Implementation phasing
+
+The full design above is the v1 target. **Build it in two waves:**
+
+**Wave 1 — core pipeline (must-have for a working v1):**
+
+1. Scaffolding, config, contracts, LLM client.
+2. Offline prep: ACM CCS dump, Finnish names list, PDF→markdown.
+3. Classification Agent (incl. keyword extraction phase).
+4. Profile Creation Agent (sampler with Finnish-name pick + LLM persona step).
+5. Reviewer Agent (template-aligned JSON schema).
+6. Renderer + Orchestrator + CLI.
+7. Mocked-LLM integration tests + live acceptance test.
+
+After Wave 1 the system produces a final report end-to-end on a real manuscript.
+
+**Wave 2 — evaluation & accounting (deferred to the very end):**
+
+1. **Judge harness** (LLM-as-judge, separate from the runtime pipeline). Built test-first against fixture reviews per §9.
+2. **Cost / token-usage reporting.** During Wave 1 the LLM client logs raw `usage` blocks per call to JSONL (cheap, no aggregation). Aggregation, per-run totals, USD cost reporting, and any cost-aware behaviour (§10) all land here.
+3. **Rubric capture follow-up.** Recover the verbatim EDAS reviewer-form 1–5 descriptor labels from authenticated EDAS access; backfill `data/edas_rubric.json` and update the Reviewer prompt to draw labels from it instead of generating ad-hoc.
+
+Rationale: Waves 1 and 2 are decoupled — the judge has no upstream dependency on the runtime pipeline beyond reading its outputs, and cost reporting is a layer over already-logged data. Pushing both to the end keeps Wave 1 minimal and lets the user see end-to-end behaviour before paying for evaluation infrastructure.

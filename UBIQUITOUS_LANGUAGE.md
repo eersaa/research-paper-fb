@@ -4,8 +4,9 @@
 
 | Term             | Definition                                                                        | Aliases to avoid          |
 | ---------------- | --------------------------------------------------------------------------------- | ------------------------- |
-| **Manuscript**   | The markdown document a researcher submits for feedback; sole content input.      | Paper, research paper, doc |
-| **Review**       | One reviewer's structured JSON output: strengths, weaknesses, suggestions, etc.   | Feedback, critique        |
+| **Manuscript**   | The markdown document a researcher submits for feedback; sole content input. PDFs are converted to Manuscripts offline. | Paper, research paper, doc |
+| **Sample Manuscript** | One of the 3 published-with-CCS papers prepared offline under `samples/<paper-id>/manuscript.md`, with its `expected_acm_classes.json` ground truth. Used for evaluation, not for runtime input. | Sample, fixture paper |
+| **Review**       | One reviewer's structured JSON output: ratings, strong / weak aspects, recommended changes. | Feedback, critique        |
 | **Final Report** | The compiled markdown file aggregating all Reviews for a Run.                     | Output, summary, report   |
 | **Run**          | One end-to-end execution of the pipeline on a single Manuscript.                  | Job, invocation           |
 
@@ -23,7 +24,8 @@
 
 | Term                     | Definition                                                                                                             | Aliases to avoid          |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| **Persona**              | A concrete reviewer identity formed from (Specialty + Stance + Primary Focus + Secondary Focus); serves as a Reviewer Agent system prompt. | Profile, character        |
+| **Persona**              | A concrete reviewer identity formed from (Reviewer Name + Specialty + Stance + Primary Focus + Secondary Focus); serves as a Reviewer Agent system prompt. | Profile, character        |
+| **Reviewer Name**        | A Finnish given name drawn from the Finnish nameday calendar (`data/finnish_names.json`), assigned to one Persona by the Sampler. Unique per Board; not part of the identity tuple under the Diversity Constraint. Surfaced in the rendered Review header. | Persona name, alias       |
 | **Specialty**            | Per-Run reviewer grounding derived from one ACM CCS Class; anchors the reviewer as a domain expert. Not an Axis — drawn fresh each Run. | Background, expertise     |
 | **Stance**               | Identity Axis value governing reviewer attitude (e.g. `critical`, `supportive`, `devil's-advocate`).                   | Attitude, tone            |
 | **Primary Focus**        | Identity Focus Axis value for a Reviewer; subject to the Diversity Constraint.                                         | Focus (unqualified), main focus |
@@ -41,6 +43,17 @@
 | **CCS Class**            | One tagged concept path with `High`/`Medium`/`Low` weight attached to a Manuscript.  | Tag, category, label      |
 | **Concept Path**         | A slash- or arrow-joined traversal from CCS root to a concept (prefer leaf nodes).   | Node path, category path  |
 | **Weight**               | One of `High`/`Medium`/`Low` — ACM-convention relevance marker on a CCS Class.       | Score, priority           |
+| **Keyword Extraction**   | First phase of the Classification Agent loop: collect candidate ACM-relevant keywords from the Manuscript's explicit `Keywords:` block, or synthesise them from title / abstract / headings. Keywords drive `lookup_acm` queries; they are logged with the Run but NOT included in `ClassificationResult` and never reach Profile Creation or Reviewer prompts. | Tagging, term mining      |
+
+## Review form (output schema)
+
+| Term                | Definition                                                                                                                       | Aliases to avoid             |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| **Review Form**     | The IEEE-style EuCNC/6G EDAS reviewer form whose layout `review-template.txt` reproduces; canonical shape of the Reviewer JSON. | Review schema, review template |
+| **Rating**          | One numeric 1–5 score on a Review Form Rating Dimension, paired with a descriptor Label.                                        | Grade (reserved for Judge)   |
+| **Rating Dimension**| One of the five Review Form axes: `relevance_and_timeliness`, `technical_content_and_rigour`, `novelty_and_originality`, `quality_of_presentation`, `overall_recommendation`. Distinct from a Rubric Dimension (which the Judge Agent scores). | Rating axis                  |
+| **Label**           | The verbatim descriptor for a given (Rating Dimension, score) cell on the EDAS form (e.g. "Strong accept" for `overall_recommendation` = 5). May be `null` until the full EDAS rubric is captured. | Descriptor                   |
+| **Aspect**          | One of the three free-text Review Form sections: `strong_aspects`, `weak_aspects`, `recommended_changes`. Each is a single string. | Comments, notes              |
 
 ## Evaluation
 
@@ -57,8 +70,16 @@
 | ------------ | ------------------------------------------------------------------------------------------------------ | ------------------- |
 | **Proxy**    | The OpenRouter-fronted AWS endpoint (`BASE_URL`) speaking OpenAI `/chat/completions`; sole network egress. | API, gateway, LLM endpoint |
 | **Orchestrator** | The thin Python module that runs Classification → Profile Creation → parallel Reviewers → Renderer. | Runner, driver, engine |
-| **Sampler**  | Deterministic Python component inside Profile Creation that emits N (Specialty, Stance, Primary Focus, Secondary Focus) tuples: round-robin Specialty over Weight-sorted CCS Classes, Core Focuses assigned first as Primary Focuses, Secondary Focus by greedy coverage, `(Stance, Primary Focus)` kept unique. | Picker, chooser     |
+| **Sampler**  | Deterministic Python component inside Profile Creation that emits N (Reviewer Name, Specialty, Stance, Primary Focus, Secondary Focus) tuples: round-robin Specialty over Weight-sorted CCS Classes, Core Focuses assigned first as Primary Focuses, Secondary Focus by greedy coverage, `(Stance, Primary Focus)` kept unique, Reviewer Name drawn unique-per-Board from `data/finnish_names.json`. | Picker, chooser     |
 | **Tool Call** | A structured function invocation by an agent; only `lookup_acm` and `write_review` are defined in v1. | Function call, action |
+
+## Offline preparation
+
+| Term                       | Definition                                                                                                                       | Aliases to avoid       |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| **Offline Prep**           | Scripts run before / outside the runtime pipeline whose outputs are committed under `data/` and `samples/`. Three exist in v1: ACM CCS dump, Finnish names list, Manuscript Ingestion. | Prep, build step       |
+| **Manuscript Ingestion**   | Offline conversion of a source PDF to a Manuscript (markdown) via `scripts/pdf_to_markdown.py` (default backend `pymupdf4llm`). The runtime pipeline never invokes this; it consumes the resulting markdown only. | PDF parsing, conversion |
+| **Finnish Nameday Calendar** | The traditional Finnish given-name calendar; source for `data/finnish_names.json`. First names only; committed; refreshed only when the pool needs to grow. | Name list, calendar    |
 
 ## Relationships
 

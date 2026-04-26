@@ -12,6 +12,16 @@
 
 ---
 
+## Implementation phasing (Wave 1 / Wave 2)
+
+Per spec §15, the build is split into two waves so the system reaches end-to-end behaviour before paying for evaluation infrastructure.
+
+**Wave 1 — core pipeline (Tasks 1 → 13, 15, 16).** Scaffolding, config, contracts, LLM client, offline prep (ACM CCS, Finnish names, PDF→markdown), Classification (with keyword-extraction phase), Profile Creation (sampler with Finnish-name pick + LLM persona step), Reviewer (template-aligned schema), Renderer, Orchestrator, CLI, live acceptance test, README. End of Wave 1: `python -m paperfb <manuscript.md>` produces a final report on a real manuscript.
+
+**Wave 2 — evaluation & accounting (Tasks 14, 14b, 14c). Built LAST.** Judge harness, cost / token-usage reporting aggregation, EDAS rubric capture follow-up. **Earlier tasks may include only thin logging hooks** (LLM client logs raw `usage` blocks per call) — no aggregation, no cost dashboards, no rubric file.
+
+Task numbering is preserved from v1 of this plan; new tasks slot in as `4a`, `4b`, `14b`, `14c`. The "Track A / Track B" two-developer split below also defers Wave 2 work to the end.
+
 ## Parallelization and decoupling
 
 Each agent is a **self-contained subpackage** under `paperfb/agents/` with one public function exposed via `__init__.py`. Internal modules (agent, prompts, tools, sampler) are package-private. Inter-agent types live in `paperfb/contracts.py` — the only cross-agent import surface. Invariants:
@@ -25,10 +35,12 @@ Each agent is a **self-contained subpackage** under `paperfb/agents/` with one p
 
 After Task 1 (scaffolding, shared), Task 2 (config), Task 2b (contracts) — both developers can work in parallel:
 
-- **Track A (LLM-integration path):** Task 3 (LLM client) → Task 4 (data prep) → Task 5 (lookup_acm) → Task 6 (Classification agent) → Task 8 (Profile Creation agent, LLM part) → Task 10 (Reviewer agent).
-- **Track B (deterministic / supporting):** Task 7 (Profile sampler) → Task 9 (write_review tool) → Task 11 (Renderer) → Task 14 (Judge).
+- **Track A (LLM-integration path):** Task 3 (LLM client) → Task 4 (ACM CCS prep) → Task 5 (lookup_acm) → Task 6 (Classification agent, incl. keyword-extraction phase) → Task 8 (Profile Creation agent, LLM part) → Task 10 (Reviewer agent, EDAS-aligned schema).
+- **Track B (deterministic / supporting):** Task 4a (Finnish names prep) → Task 4b (PDF→markdown tool) → Task 7 (Profile sampler, incl. Finnish-name pick) → Task 9 (write_review tool) → Task 11 (Renderer, ratings table + name header).
 
-Task 12 (Orchestrator) is the merge point. Tasks 13, 15, 16 close out.
+Task 12 (Orchestrator) is the merge point. Tasks 13, 15, 16 close out **Wave 1**.
+
+**Wave 2 (only after Wave 1 ships):** Task 14 (Judge) → Task 14b (cost / token-usage reporting) → Task 14c (EDAS rubric capture).
 
 ---
 
@@ -41,16 +53,20 @@ Files created, grouped by task:
 - **Task 2b:** `paperfb/contracts.py`, `tests/test_contracts.py`
 - **Task 3:** `paperfb/llm_client.py`, `tests/test_llm_client.py`
 - **Task 4:** `scripts/build_acm_ccs.py`, `tests/test_build_acm_ccs.py`, `tests/fixtures/ccs_sample.xml`, generated `data/acm_ccs.json`
+- **Task 4a (Wave 1, new):** `scripts/build_finnish_names.py`, `tests/test_build_finnish_names.py`, generated `data/finnish_names.json`
+- **Task 4b (Wave 1, new):** `scripts/pdf_to_markdown.py`, `tests/test_pdf_to_markdown.py`, `tests/fixtures/tiny_paper.pdf`, sample outputs under `samples/<paper-id>/{manuscript.md, manuscript.pdf, expected_acm_classes.json}`
 - **Task 5:** `paperfb/agents/classification/tools.py`, `tests/agents/classification/test_tools.py`
-- **Task 6:** `paperfb/agents/classification/{__init__.py, agent.py, prompts.py}`, `tests/agents/classification/test_agent.py`
-- **Task 7:** `paperfb/agents/profile_creation/sampler.py`, `tests/agents/profile_creation/test_sampler.py`
-- **Task 8:** `paperfb/agents/profile_creation/{__init__.py, agent.py, prompts.py}`, `tests/agents/profile_creation/test_agent.py`
+- **Task 6:** `paperfb/agents/classification/{__init__.py, agent.py, prompts.py}`, `tests/agents/classification/test_agent.py` — agent runs the keyword-extraction phase before driving `lookup_acm`; `ClassificationResult` contract unchanged
+- **Task 7:** `paperfb/agents/profile_creation/sampler.py`, `tests/agents/profile_creation/test_sampler.py` — sampler now also picks unique Finnish given names per Board (loads `data/finnish_names.json`)
+- **Task 8:** `paperfb/agents/profile_creation/{__init__.py, agent.py, prompts.py}`, `tests/agents/profile_creation/test_agent.py` — persona prompt addresses the reviewer by their Finnish given name
 - **Task 9:** `paperfb/agents/reviewer/tools.py`, `tests/agents/reviewer/test_tools.py`
-- **Task 10:** `paperfb/agents/reviewer/{__init__.py, agent.py, prompts.py}`, `tests/agents/reviewer/test_agent.py`
-- **Task 11:** `paperfb/renderer.py`, `tests/test_renderer.py`
+- **Task 10:** `paperfb/agents/reviewer/{__init__.py, agent.py, prompts.py}`, `tests/agents/reviewer/test_agent.py` — review JSON schema mirrors `review-template.txt` (5 ratings + 3 free-text aspects); `section_comments` removed
+- **Task 11:** `paperfb/renderer.py`, `tests/test_renderer.py` — per-reviewer header includes Finnish name; ratings rendered as a 5-row table
 - **Task 12:** `paperfb/orchestrator.py`, `tests/test_orchestrator.py`
 - **Task 13:** `paperfb/main.py`, `tests/test_main.py`
-- **Task 14:** `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/{good_review.json, bad_review.json, tiny_manuscript_for_judge.md}`
+- **Task 14 (Wave 2, last):** `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/{good_review.json, bad_review.json, tiny_manuscript_for_judge.md}`
+- **Task 14b (Wave 2, last, new):** cost / token-usage aggregation in `paperfb/logging.py` + `paperfb/main.py` end-of-run summary; `tests/test_cost_reporting.py`
+- **Task 14c (Wave 2, last, new):** `data/edas_rubric.json` (verbatim 1–5 descriptor labels per Rating Dimension, captured from authenticated EDAS) + reviewer-prompt update to draw labels from it
 - **Task 15:** `tests/test_acceptance_live.py`, `tests/fixtures/tiny_manuscript.md`
 - **Task 16:** `README.md`
 
@@ -122,11 +138,12 @@ logs/
 evaluations/
 data/ccs_source.xml
 data/_ccs_descriptions_cache.json
+samples/**/manuscript.pdf
 .pytest_cache/
 *.egg-info/
 ```
 
-Note: `data/acm_ccs.json` IS committed (it's the prep-tool output consumed by the pipeline). The raw XML source and the per-run description cache are not.
+Note: `data/acm_ccs.json` and `data/finnish_names.json` ARE committed (prep-tool outputs consumed by the pipeline). Source PDFs under `samples/<paper-id>/manuscript.pdf` are NOT committed — only the converted `manuscript.md` and `expected_acm_classes.json` are.
 
 - [ ] **Step 3: Create package init files**
 
@@ -964,6 +981,124 @@ python -c "import json; d = json.load(open('data/acm_ccs.json')); print(len(d), 
 git add scripts/build_acm_ccs.py tests/test_build_acm_ccs.py tests/fixtures/ccs_sample.xml .gitignore
 git add -f data/acm_ccs.json
 git commit -m "Add ACM CCS data-prep tool and generated taxonomy"
+```
+
+---
+
+## Task 4a: Finnish names data preparation tool
+
+**Files:**
+- Create: `scripts/build_finnish_names.py`, `tests/test_build_finnish_names.py`
+- Generated: `data/finnish_names.json` (committed)
+
+**Goal:** produce `data/finnish_names.json` — a list of traditional Finnish given names drawn from the Finnish nameday calendar. The Profile Creation sampler reads this file at runtime to assign a unique `Reviewer Name` to each persona.
+
+- [ ] **Step 1: Pick a source**
+
+Use a static, license-clean source for the v1 list — e.g. a curated subset of the Finnish nameday calendar (Yliopiston almanakka tradition) committed as a constant inside `scripts/build_finnish_names.py`. Avoid runtime fetches. First names only. **Pool size: ≥50, balanced ~50/50 male/female** (e.g. 25 male + 25 female) so any seeded Board has roughly even gender mix. Encode the male/female split as two named lists in the script and concatenate after sorting.
+
+- [ ] **Step 2: Write the failing test**
+
+Create `tests/test_build_finnish_names.py`:
+
+- Asserts `data/finnish_names.json` exists after the script runs.
+- Asserts the JSON parses to `list[str]` with `len(names) >= 50`.
+- Asserts every entry is non-empty, no whitespace/punctuation, and unique.
+- Asserts gender balance: the script's male and female sub-lists each have `>= 25` entries; their union (deduplicated) equals the committed JSON.
+- Asserts deterministic output (running the script twice yields byte-identical JSON).
+
+- [ ] **Step 3: Implement `scripts/build_finnish_names.py`**
+
+A small script: declare the curated list as a constant, sort it (deterministic), `json.dump` to `data/finnish_names.json` with `indent=2, ensure_ascii=False, sort_keys=False`. No network. Idempotent.
+
+- [ ] **Step 4: Run the prep tool, then tests**
+
+```bash
+uv run python scripts/build_finnish_names.py
+uv run pytest tests/test_build_finnish_names.py
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/build_finnish_names.py tests/test_build_finnish_names.py
+git add -f data/finnish_names.json
+git commit -m "Add Finnish names data-prep tool and generated list"
+```
+
+---
+
+## Task 4b: PDF → Markdown ingestion tool
+
+**Files:**
+- Create: `scripts/pdf_to_markdown.py`, `tests/test_pdf_to_markdown.py`, `tests/fixtures/tiny_paper.pdf`
+
+**Goal:** offline conversion of a source PDF to a Manuscript (markdown) for use under `samples/<paper-id>/manuscript.md`. The runtime CLI never invokes this — it consumes markdown only.
+
+- [ ] **Step 1: Add `pymupdf4llm` to `pyproject.toml`**
+
+Under `[project.optional-dependencies]` add a new `prep` extra so the heavier PDF dependency is opt-in:
+
+```toml
+prep = [
+    "pymupdf4llm>=0.0.17",
+]
+```
+
+Run `uv sync --extra prep`.
+
+- [ ] **Step 2: Write the failing test**
+
+Create `tests/test_pdf_to_markdown.py`:
+
+- Generates or reads `tests/fixtures/tiny_paper.pdf` (a 1-page synthetic PDF — produce it via `pymupdf` in a fixture builder, or commit a small known PDF).
+- Calls `pdf_to_markdown.convert(input_path, output_path)`.
+- Asserts the output file exists, is non-empty, and contains at least one `#` heading (or a known body string from the fixture).
+
+- [ ] **Step 3: Implement `scripts/pdf_to_markdown.py`**
+
+```python
+import argparse
+import pymupdf4llm
+
+def convert(input_pdf: str, output_md: str) -> None:
+    md = pymupdf4llm.to_markdown(input_pdf)
+    with open(output_md, "w", encoding="utf-8") as f:
+        f.write(md)
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_pdf")
+    parser.add_argument("output_md")
+    args = parser.parse_args()
+    convert(args.input_pdf, args.output_md)
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+Scope: text-first conversion. Tables are best-effort under `pymupdf4llm`. If a sample paper's tables are critical and lost, swap in `marker` later — out of scope for v1.
+
+- [ ] **Step 4: Convert sample papers**
+
+For each of the 3 chosen papers (`<paper-id>`):
+
+```bash
+mkdir -p samples/<paper-id>
+cp <paper>.pdf samples/<paper-id>/manuscript.pdf
+uv run python scripts/pdf_to_markdown.py samples/<paper-id>/manuscript.pdf samples/<paper-id>/manuscript.md
+# also commit samples/<paper-id>/expected_acm_classes.json with the ACM CCS classes published with the paper
+```
+
+Add `samples/**/manuscript.pdf` to `.gitignore` (decision: source PDFs are NEVER committed; only the converted `manuscript.md` and `expected_acm_classes.json` are committed). Contributors regenerate the markdown locally with `pdf_to_markdown.py` from a PDF they obtain themselves.
+
+- [ ] **Step 5: Run tests and commit**
+
+```bash
+uv run pytest tests/test_pdf_to_markdown.py
+git add scripts/pdf_to_markdown.py tests/test_pdf_to_markdown.py tests/fixtures/tiny_paper.pdf samples/
+git commit -m "Add PDF→markdown ingestion tool and sample manuscripts"
 ```
 
 ---
@@ -2399,7 +2534,9 @@ git commit -m "Add CLI entry point"
 
 ---
 
-## Task 14: Judge (LLM-as-judge, TDD)
+## Task 14: Judge (LLM-as-judge, TDD) — Wave 2
+
+> **Phasing:** This task is **Wave 2**. Do not start it until Tasks 1–13, 15, and 16 are complete and the core pipeline ships end-to-end on a real manuscript. See "Implementation phasing" at the top of this plan.
 
 **Files:**
 - Create: `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/good_review.json`, `tests/fixtures/bad_review.json`, `tests/fixtures/tiny_manuscript_for_judge.md`
@@ -2886,3 +3023,100 @@ cat /tmp/judge.json
 ```
 
 Expected: per-reviewer rubric scores.
+
+---
+
+## Task 14b: Cost / token-usage reporting — Wave 2
+
+> **Phasing:** Wave 2. Build only after Task 14 (Judge) ships. During Waves 1 and the rest of Wave 2, the LLM client logs raw `usage` blocks per call to `logs/run-<timestamp>.jsonl` — no aggregation. This task adds the aggregation layer.
+
+**Files:**
+- Modify: `paperfb/logging.py`, `paperfb/main.py`
+- Create: `tests/test_cost_reporting.py`
+
+**Goal:** at end of run, print and log a single global summary of total input/output tokens and total USD cost (from the proxy's `usage.cost` field, per spec §10). **No per-agent breakdown in v1.**
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/test_cost_reporting.py`:
+
+- Build a synthetic JSONL log with N entries, each carrying `usage.{prompt_tokens, completion_tokens, total_tokens, cost}`.
+- Call `paperfb.logging.summarise_run(log_path) -> CostSummary`.
+- Assert totals are arithmetic sums of the entries (prompt, completion, total tokens, USD cost). No per-agent grouping.
+
+- [ ] **Step 2: Implement `summarise_run`**
+
+A pure function over an existing JSONL file. Returns global totals only. No new I/O at LLM-call time — Wave 1's logging hooks already wrote what we need.
+
+- [ ] **Step 3: Wire into `main.py`**
+
+After the orchestrator returns, call `summarise_run(run_log_path)` and print:
+
+```
+Run cost: $0.0123  (prompt 4321 tok, completion 1789 tok, total 6110 tok)
+```
+
+Logged, not gating. No retries / no cost cap in v1.
+
+- [ ] **Step 4: Run tests and commit**
+
+```bash
+uv run pytest tests/test_cost_reporting.py
+git add paperfb/logging.py paperfb/main.py tests/test_cost_reporting.py
+git commit -m "Aggregate per-run cost and token usage summary"
+```
+
+---
+
+## Task 14c: EDAS rubric capture follow-up — Wave 2
+
+> **Phasing:** Wave 2. Last task. Unblocks fully-canonical Reviewer output Labels.
+
+**Files:**
+- Create: `data/edas_rubric.json`
+- Modify: `paperfb/agents/reviewer/prompts.py` (and any test fixtures asserting Label content)
+
+**Goal:** capture the verbatim 1–5 descriptor labels for each Rating Dimension on the EuCNC/6G EDAS reviewer form, and have the Reviewer agent draw labels from that file instead of generating ad-hoc labels.
+
+Per the research log on this plan: the labels are gated behind authenticated EDAS access and not publicly indexed. Two web-research agents searched IEEE / EuCNC / 6G Summit reviewer documentation and surfaced only the dimension names — never the full per-cell labels.
+
+- [ ] **Step 1: Acquire the rubric**
+
+Recover via one of:
+
+- TPC member with active EDAS reviewer access screenshots each dropdown and transcribes the wording verbatim.
+- Saved review HTML page from EDAS (`view-source:` on a populated review form).
+- Direct outreach to EuCNC technical chairs.
+
+- [ ] **Step 2: Encode `data/edas_rubric.json`**
+
+```json
+{
+  "relevance_and_timeliness": {
+    "5": "...",
+    "4": "Good",
+    "3": "...",
+    "2": "Little",
+    "1": "..."
+  },
+  "technical_content_and_rigour":  {"5": "...", "4": "...", "3": "Valid work but limited contribution", "2": "Marginal work and simple contribution. Some flaws", "1": "..."},
+  "novelty_and_originality":       {"5": "...", "4": "Significant original work and novel results", "3": "Some interesting ideas and results on a subject well investigated", "2": "Minor variations on a well investigated subject", "1": "..."},
+  "quality_of_presentation":       {"5": "...", "4": "Well written", "3": "Readable, but revision is needed in some parts", "2": "...", "1": "..."},
+  "overall_recommendation":        {"5": "Strong accept", "4": "...", "3": "Borderline", "2": "...", "1": "Strong reject"}
+}
+```
+
+- [ ] **Step 3: Update Reviewer prompt**
+
+In `paperfb/agents/reviewer/prompts.py`, embed the rubric content (or a reference to load it) so the Reviewer Agent emits the canonical Label string for whichever score it picks. Drop the "fall back to `null` for unknown labels" branch.
+
+- [ ] **Step 4: Tighten tests**
+
+Update `tests/agents/reviewer/test_agent.py` to assert that emitted Labels match the rubric exactly for each dimension, not free-form approximations.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add data/edas_rubric.json paperfb/agents/reviewer/prompts.py tests/agents/reviewer/test_agent.py
+git commit -m "Wire canonical EDAS rubric labels into Reviewer agent"
+```
