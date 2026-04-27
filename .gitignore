@@ -13,3 +13,5 @@ data/_ccs_chunks/
 
 proxy-test.py
 settings.local.json
+
+samples/
