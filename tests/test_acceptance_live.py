@@ -4,6 +4,7 @@ import os
 from dataclasses import replace
 from pathlib import Path
 import pytest
+from dotenv import load_dotenv
 
 from paperfb.config import load_config
 from paperfb.llm_client import from_env
@@ -11,6 +12,8 @@ from paperfb.orchestrator import run_pipeline
 
 
 pytestmark = pytest.mark.slow
+
+load_dotenv()
 
 
 @pytest.fixture
