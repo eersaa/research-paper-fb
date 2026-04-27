@@ -8,7 +8,7 @@ Renderer and Judge) is documented via REVIEW_REQUIRED_FIELDS below. Kept as a
 dict rather than a dataclass because it arrives directly from an LLM tool call.
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TypedDict
 
 
 @dataclass(frozen=True)
@@ -60,3 +60,10 @@ REVIEW_REQUIRED_FIELDS = [
     "weak_aspects",
     "recommended_changes",
 ]
+
+
+class SkippedReviewer(TypedDict):
+    """Orchestrator-built dict for a reviewer whose run raised. Consumed by the
+    renderer's "Skipped reviewers" section."""
+    id: str
+    reason: str

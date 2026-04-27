@@ -2219,7 +2219,7 @@ def _prose_or_placeholder(text) -> str:
 
 
 def render_report(classes: list[dict], reviews: list[dict],
-                  skipped_reviewers: list[dict]) -> str:
+                  skipped_reviewers: list[SkippedReviewer]) -> str:
     lines: list[str] = ["# Manuscript feedback report", ""]
 
     lines.append("## ACM classification")
@@ -2367,8 +2367,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         for i in range(3)
     ]
     # need concrete ReviewerTuple/Profile types for real code path:
-    from paperfb.agents.profile_creation.sampler import ReviewerTuple
-    from paperfb.agents.profile_creation import ReviewerProfile
+    from paperfb.contracts import ReviewerTuple, ReviewerProfile
     tuples = [
         ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML", "weight": "High"},
                       stance="critical", primary_focus=["methods", "results", "novelty"][i],
@@ -2401,8 +2400,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         manuscript="hello",
         cfg=cfg,
         llm=llm,
-        classify_fn=lambda manuscript, llm, model, ccs_path, max_classes:
-            MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
+        classify_fn=lambda **kw: MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
         sample_fn=lambda **kwargs: tuples,
         profile_fn=lambda tuples, axes, llm, model: profiles,
         reviewer_fn=fake_reviewer,
@@ -2416,8 +2414,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
 
 
 def test_reviewer_failure_is_skipped(cfg, tmp_path):
-    from paperfb.agents.profile_creation.sampler import ReviewerTuple
-    from paperfb.agents.profile_creation import ReviewerProfile
+    from paperfb.contracts import ReviewerTuple, ReviewerProfile
     tuples = [ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML"}, stance="critical",
                              primary_focus=["methods", "results", "novelty"][i],
                              secondary_focus=None) for i in range(3)]
@@ -2471,7 +2468,7 @@ from pathlib import Path
 
 from paperfb.config import Config
 from paperfb.contracts import SkippedReviewer
-from paperfb.agents.classification import classify_manuscript, ClassificationResult
+from paperfb.agents.classification import classify_manuscript
 from paperfb.agents.profile_creation import create_profiles, sample_reviewer_tuples
 from paperfb.agents.reviewer import run_reviewer
 from paperfb.renderer import render_report
@@ -2481,7 +2478,7 @@ from paperfb.renderer import render_report
 class PipelineResult:
     classes: list[dict]
     reviews: list[dict]
-    skipped: list[dict]
+    skipped: list[SkippedReviewer]
     report_path: Path
 
 
@@ -2509,7 +2506,7 @@ async def run_pipeline(
         ccs_path=Path(cfg.paths.acm_ccs),
         max_classes=cfg.classification.max_classes,
     )
-    classes = classification.classes if isinstance(classification, ClassificationResult) else classification.classes
+    classes = classification.classes
 
     # 2. Sample reviewer tuples deterministically
     # Sampler operates on names; descriptions are consumed by Profile Creation only.
@@ -2583,7 +2580,7 @@ from unittest.mock import patch, MagicMock
 from paperfb.main import main
 
 
-def test_cli_reads_manuscript_and_writes_report(tmp_path, monkeypatch):
+def test_cli_exits_zero_when_pipeline_succeeds(tmp_path, monkeypatch):
     manuscript = tmp_path / "ms.md"
     manuscript.write_text("# Title\n\nAbstract.\n")
     monkeypatch.setenv("BASE_URL", "http://proxy.invalid")
@@ -2593,8 +2590,10 @@ def test_cli_reads_manuscript_and_writes_report(tmp_path, monkeypatch):
     fake_result.skipped = []
     fake_result.reviews = [{"reviewer_id": "r1"}, {"reviewer_id": "r2"}, {"reviewer_id": "r3"}]
 
+    fake_llm = MagicMock()
+    fake_llm.usage_summary.return_value = {"total_tokens": 0, "total_cost_usd": 0.0}
     with patch("paperfb.main.asyncio.run", return_value=fake_result), \
-         patch("paperfb.main.from_env", return_value=MagicMock()):
+         patch("paperfb.main.from_env", return_value=fake_llm):
         rc = main([
             str(manuscript),
             "--output", str(tmp_path / "report.md"),
@@ -2657,7 +2656,7 @@ def main(argv=None) -> int:
             output=args.output or cfg.paths.output,
             reviews_dir=args.reviews_dir or cfg.paths.reviews_dir,
         ))
-    if args.count:
+    if args.count is not None:
         cfg = replace(cfg, reviewers=replace(cfg.reviewers, count=args.count))
 
     llm = from_env(default_model=cfg.models.default)
