@@ -2590,8 +2590,10 @@ def test_cli_reads_manuscript_and_writes_report(tmp_path, monkeypatch):
     fake_result.skipped = []
     fake_result.reviews = [{"reviewer_id": "r1"}, {"reviewer_id": "r2"}, {"reviewer_id": "r3"}]
 
+    fake_llm = MagicMock()
+    fake_llm.usage_summary.return_value = {"total_tokens": 0, "total_cost_usd": 0.0}
     with patch("paperfb.main.asyncio.run", return_value=fake_result), \
-         patch("paperfb.main.from_env", return_value=MagicMock()):
+         patch("paperfb.main.from_env", return_value=fake_llm):
         rc = main([
             str(manuscript),
             "--output", str(tmp_path / "report.md"),
