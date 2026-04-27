@@ -38,7 +38,7 @@ def main(argv=None) -> int:
             output=args.output or cfg.paths.output,
             reviews_dir=args.reviews_dir or cfg.paths.reviews_dir,
         ))
-    if args.count:
+    if args.count is not None:
         cfg = replace(cfg, reviewers=replace(cfg.reviewers, count=args.count))
 
     llm = from_env(default_model=cfg.models.default)

@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 from paperfb.main import main
 
 
-def test_cli_reads_manuscript_and_writes_report(tmp_path, monkeypatch):
+def test_cli_exits_zero_when_pipeline_succeeds(tmp_path, monkeypatch):
     manuscript = tmp_path / "ms.md"
     manuscript.write_text("# Title\n\nAbstract.\n")
     monkeypatch.setenv("BASE_URL", "http://proxy.invalid")

@@ -2580,7 +2580,7 @@ from unittest.mock import patch, MagicMock
 from paperfb.main import main
 
 
-def test_cli_reads_manuscript_and_writes_report(tmp_path, monkeypatch):
+def test_cli_exits_zero_when_pipeline_succeeds(tmp_path, monkeypatch):
     manuscript = tmp_path / "ms.md"
     manuscript.write_text("# Title\n\nAbstract.\n")
     monkeypatch.setenv("BASE_URL", "http://proxy.invalid")
@@ -2656,7 +2656,7 @@ def main(argv=None) -> int:
             output=args.output or cfg.paths.output,
             reviews_dir=args.reviews_dir or cfg.paths.reviews_dir,
         ))
-    if args.count:
+    if args.count is not None:
         cfg = replace(cfg, reviewers=replace(cfg.reviewers, count=args.count))
 
     llm = from_env(default_model=cfg.models.default)
