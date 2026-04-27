@@ -41,6 +41,7 @@ class ReviewerProfile:
     primary_focus: str
     secondary_focus: Optional[str]
     persona_prompt: str
+    name: str = ""   # Finnish given name assigned by the sampler
 
 
 @dataclass
