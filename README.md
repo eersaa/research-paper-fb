@@ -12,7 +12,7 @@ uv sync --extra dev   # creates .venv and installs deps + dev extras
 # BASE_URL for the course proxy is already in .env
 
 # Run it
-uv run python -m paperfb path/to/manuscript.md --output report.md
+uv run python -m paperfb path/to/manuscript.md --output final_report.md
 ```
 
 Add `-n 5` to use 5 reviewers, `--config path/to/your.yaml` to override the config.
@@ -42,6 +42,8 @@ See [docs/superpowers/specs/2026-04-24-research-paper-feedback-system-design.md]
 The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No telemetry, no third-party calls. Outputs land in `reviews/`, `final_report.md`, `logs/`, `evaluations/` — all local.
 
 ## Evaluation
+
+_Wave 2 — `scripts/judge.py` is not yet implemented; this section documents the planned interface._
 
 ```bash
 uv run python scripts/judge.py --manuscript samples/paper.md --reviews-dir reviews --output evaluations/run.json
