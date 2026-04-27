@@ -65,8 +65,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         manuscript="hello",
         cfg=cfg,
         llm=llm,
-        classify_fn=lambda manuscript, llm, model, ccs_path, max_classes:
-            MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
+        classify_fn=lambda **kw: MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
         sample_fn=lambda **kwargs: tuples,
         profile_fn=lambda tuples, axes, llm, model: profiles,
         reviewer_fn=fake_reviewer,

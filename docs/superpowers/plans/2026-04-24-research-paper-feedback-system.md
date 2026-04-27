@@ -2219,7 +2219,7 @@ def _prose_or_placeholder(text) -> str:
 
 
 def render_report(classes: list[dict], reviews: list[dict],
-                  skipped_reviewers: list[dict]) -> str:
+                  skipped_reviewers: list[SkippedReviewer]) -> str:
     lines: list[str] = ["# Manuscript feedback report", ""]
 
     lines.append("## ACM classification")
@@ -2400,8 +2400,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         manuscript="hello",
         cfg=cfg,
         llm=llm,
-        classify_fn=lambda manuscript, llm, model, ccs_path, max_classes:
-            MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
+        classify_fn=lambda **kw: MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
         sample_fn=lambda **kwargs: tuples,
         profile_fn=lambda tuples, axes, llm, model: profiles,
         reviewer_fn=fake_reviewer,
@@ -2468,7 +2467,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from paperfb.config import Config
-from paperfb.contracts import ClassificationResult, SkippedReviewer
+from paperfb.contracts import SkippedReviewer
 from paperfb.agents.classification import classify_manuscript
 from paperfb.agents.profile_creation import create_profiles, sample_reviewer_tuples
 from paperfb.agents.reviewer import run_reviewer
@@ -2479,7 +2478,7 @@ from paperfb.renderer import render_report
 class PipelineResult:
     classes: list[dict]
     reviews: list[dict]
-    skipped: list[dict]
+    skipped: list[SkippedReviewer]
     report_path: Path
 
 
@@ -2507,7 +2506,7 @@ async def run_pipeline(
         ccs_path=Path(cfg.paths.acm_ccs),
         max_classes=cfg.classification.max_classes,
     )
-    classes = classification.classes if isinstance(classification, ClassificationResult) else classification.classes
+    classes = classification.classes
 
     # 2. Sample reviewer tuples deterministically
     # Sampler operates on names; descriptions are consumed by Profile Creation only.

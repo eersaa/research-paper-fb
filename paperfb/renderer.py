@@ -1,10 +1,13 @@
+from paperfb.contracts import SkippedReviewer
+
+
 def _prose_or_placeholder(text) -> str:
     text = (text or "").strip()
     return text if text else "_(none)_"
 
 
 def render_report(classes: list[dict], reviews: list[dict],
-                  skipped_reviewers: list[dict]) -> str:
+                  skipped_reviewers: list[SkippedReviewer]) -> str:
     lines: list[str] = ["# Manuscript feedback report", ""]
 
     lines.append("## ACM classification")

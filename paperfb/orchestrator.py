@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from paperfb.config import Config
-from paperfb.contracts import ClassificationResult, SkippedReviewer
+from paperfb.contracts import SkippedReviewer
 from paperfb.agents.classification import classify_manuscript
 from paperfb.agents.profile_creation import create_profiles, sample_reviewer_tuples
 from paperfb.agents.reviewer import run_reviewer
@@ -15,7 +15,7 @@ from paperfb.renderer import render_report
 class PipelineResult:
     classes: list[dict]
     reviews: list[dict]
-    skipped: list[dict]
+    skipped: list[SkippedReviewer]
     report_path: Path
 
 
@@ -43,7 +43,7 @@ async def run_pipeline(
         ccs_path=Path(cfg.paths.acm_ccs),
         max_classes=cfg.classification.max_classes,
     )
-    classes = classification.classes if isinstance(classification, ClassificationResult) else classification.classes
+    classes = classification.classes
 
     # 2. Sample reviewer tuples deterministically
     # Sampler operates on names; descriptions are consumed by Profile Creation only.
