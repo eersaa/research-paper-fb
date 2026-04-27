@@ -55,6 +55,8 @@ def test_live_pipeline_produces_report(cfg_tmp, manuscript, tmp_path):
     #     manuscript has a unique sentinel phrase:
     sentinel = "wall-clock time recorded on a"
     logs_dir = Path(cfg_tmp.paths.logs_dir)
-    for log in logs_dir.rglob("*"):
-        if log.is_file():
-            assert sentinel not in log.read_text(), f"manuscript leaked to {log}"
+    if logs_dir.exists():
+        for log in logs_dir.rglob("*"):
+            if log.is_file():
+                assert sentinel not in log.read_text(encoding="utf-8", errors="replace"), \
+                    f"manuscript leaked to {log}"
