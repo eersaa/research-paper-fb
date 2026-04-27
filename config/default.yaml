@@ -1,0 +1,21 @@
+transport: openai_chat_completions
+base_url_env: BASE_URL
+models:
+  default: anthropic/claude-3.5-haiku
+  classification: anthropic/claude-3.5-haiku
+  profile_creation: anthropic/claude-3.5-haiku
+  reviewer: anthropic/claude-3.5-haiku
+  judge: openai/gpt-4.1-mini
+reviewers:
+  count: 3
+  core_focuses: [methods, results, novelty]
+  secondary_focus_per_reviewer: true
+  diversity: strict
+  seed: null
+classification:
+  max_classes: 5
+paths:
+  acm_ccs: data/acm_ccs.json
+  reviews_dir: reviews
+  output: final_report.md
+  logs_dir: logs

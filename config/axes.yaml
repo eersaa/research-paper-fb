@@ -1,0 +1,18 @@
+stances:
+  - neutral
+  - supportive
+  - critical
+  - skeptical
+  - rigorous
+  - pragmatic
+  - devil's-advocate
+  - visionary
+focuses:
+  - methods
+  - results
+  - impact
+  - novelty
+  - clarity
+  - related-work
+  - reproducibility
+  - ethics
