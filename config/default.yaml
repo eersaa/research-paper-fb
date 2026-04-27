@@ -16,6 +16,7 @@ classification:
   max_classes: 5
 paths:
   acm_ccs: data/acm_ccs.json
+  finnish_names: data/finnish_names.json
   reviews_dir: reviews
   output: final_report.md
   logs_dir: logs

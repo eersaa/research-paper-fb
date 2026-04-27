@@ -16,7 +16,7 @@
 
 Per spec §15, the build is split into two waves so the system reaches end-to-end behaviour before paying for evaluation infrastructure.
 
-**Wave 1 — core pipeline (Tasks 1 → 13, 15, 16).** Scaffolding, config, contracts, LLM client, offline prep (ACM CCS, Finnish names, PDF→markdown), Classification (with keyword-extraction phase), Profile Creation (sampler with Finnish-name pick + LLM persona step), Reviewer (template-aligned schema), Renderer, Orchestrator, CLI, live acceptance test, README. End of Wave 1: `python -m paperfb <manuscript.md>` produces a final report on a real manuscript.
+**Wave 1 — core pipeline (Tasks 1 → 13, 15, 16).** Scaffolding, config, contracts, LLM client, offline prep (ACM CCS, Finnish names), Classification (with keyword-extraction phase), Profile Creation (sampler with Finnish-name pick + LLM persona step), Reviewer (template-aligned schema), Renderer, Orchestrator, CLI, live acceptance test, README. End of Wave 1: `python -m paperfb <manuscript.md>` produces a final report on a real manuscript. Manuscript-PDF→markdown conversion is performed outside this project.
 
 **Wave 2 — evaluation & accounting (Tasks 14, 14b). Built LAST.** Judge harness, cost / token-usage reporting aggregation. **Earlier tasks may include only thin logging hooks** (LLM client logs raw `usage` blocks per call) — no aggregation, no cost dashboards. (Task 14c "EDAS rubric capture" was removed by the [2026-04-27 merged review template delta](../specs/2026-04-27-merged-review-template-design.md): no numeric ratings → no rubric to capture.)
 
@@ -43,7 +43,7 @@ The modules sit in three phases, gated by data dependencies:
 | **1. Independent modules** (parallelizable) | M1 Classification | 4, 5, 6 | Dev A | ACM CCS data prep → `lookup_acm` tool → Classification agent (with keyword-extraction phase). Public API: `classify(manuscript, cfg, llm) -> ClassificationResult`. |
 | | M2 Profile Creation | 4a, 7, 8 | Dev B | Finnish names data prep → deterministic Sampler (with name picker) → LLM persona step. Public API: `create_profiles(classes, cfg, llm) -> list[ReviewerProfile]`. |
 | | M3 Reviewer | 9, 10 | Dev A (after M1) | `write_review` tool → Reviewer agent (3 free-text aspects only — see 2026-04-27 review-template merge). Public API: `review(profile, manuscript, cfg, llm) -> Path`. |
-| | M4 Manuscript Ingestion | 4b | Dev B (slot anywhere) | Standalone PDF→markdown tool. No agent dependency. Small — fills idle time between M2 and M5 for Dev B. |
+| | ~~M4 Manuscript Ingestion~~ | ~~4b~~ | — | **Removed.** Manuscript-PDF→markdown is performed outside this project. |
 | | M5 Renderer | 11 | Dev B (after M3 schema is stable) | Pure code, no LLM. Depends only on the Review JSON schema (frozen in `contracts.py` + a fixture from M3). Can be drafted against the schema and finalised once M3 commits. |
 | **2. Integration** | I1 Orchestrator + CLI | 12, 13 | whichever dev finishes Phase 1 first | Wires the three agent public APIs + Renderer. |
 | | I2 Live acceptance + README | 15, 16 | the other dev | Closes Wave 1. Needs I1 done. |
@@ -59,7 +59,6 @@ After Wave 1 ships end-to-end, **Wave 2** modules — also independent — can b
 
 - Dev A handles the two LLM-loop-with-tool agents (Classification, Reviewer) — same mental model.
 - Dev B handles the deterministic / supporting work (Sampler, Ingestion, Renderer) plus the more constrained Profile Creation LLM step.
-- M4 Ingestion (small, standalone) drops into Dev B's queue between M2 and M5 to balance load while Dev A is still on M1/M3.
 - M5 Renderer's only schema dependency on M3 is mitigated by freezing the Review JSON shape in `contracts.py` early — Dev B can mock M3's output and develop the Renderer against it in parallel.
 
 **Module handoff diagram:**
@@ -75,10 +74,7 @@ After Wave 1 ships end-to-end, **Wave 2** modules — also independent — can b
   Dev A: M1 Classification    Dev B: M2 Profile Creation
         │                        │
         ▼                        ▼
-  Dev A: M3 Reviewer          Dev B: M4 Ingestion
-        │                        │
-        │                        ▼
-        │                     Dev B: M5 Renderer  ◄── depends on M3 schema (frozen in contracts.py)
+  Dev A: M3 Reviewer          Dev B: M5 Renderer  ◄── depends on M3 schema (frozen in contracts.py)
         │                        │
         └────────────┬───────────┘
                      ▼
@@ -106,7 +102,7 @@ Files created, grouped by task:
 - **Task 3:** `paperfb/llm_client.py`, `tests/test_llm_client.py`
 - **Task 4:** `scripts/build_acm_ccs.py`, `tests/test_build_acm_ccs.py`, `tests/fixtures/ccs_sample.xml`, generated `data/acm_ccs.json`
 - **Task 4a (Wave 1, new):** `scripts/build_finnish_names.py`, `tests/test_build_finnish_names.py`, generated `data/finnish_names.json`
-- **Task 4b (Wave 1, new):** `scripts/pdf_to_markdown.py`, `tests/test_pdf_to_markdown.py`, `tests/fixtures/tiny_paper.pdf`, sample outputs under `samples/<paper-id>/{manuscript.md, manuscript.pdf, expected_acm_classes.json}`
+- **Task 4b:** REMOVED — manuscript-PDF→markdown conversion is performed outside this project. Sample papers are delivered as `samples/<paper-id>/{manuscript.md, expected_acm_classes.json}`.
 - **Task 5:** `paperfb/agents/classification/tools.py`, `tests/agents/classification/test_tools.py`
 - **Task 6:** `paperfb/agents/classification/{__init__.py, agent.py, prompts.py}`, `tests/agents/classification/test_agent.py` — agent runs the keyword-extraction phase before driving `lookup_acm`; `ClassificationResult` contract unchanged
 - **Task 7:** `paperfb/agents/profile_creation/sampler.py`, `tests/agents/profile_creation/test_sampler.py` — sampler now also picks unique Finnish given names per Board (loads `data/finnish_names.json`)
@@ -129,7 +125,7 @@ Files created, grouped by task:
 **Files:**
 - Create: `.mise.toml`, `pyproject.toml`, `.gitignore`, `paperfb/__init__.py`, `paperfb/__main__.py`, `paperfb/agents/__init__.py`, `paperfb/agents/classification/__init__.py`, `paperfb/agents/profile_creation/__init__.py`, `paperfb/agents/reviewer/__init__.py`, `tests/__init__.py`, `tests/agents/__init__.py`, `tests/agents/classification/__init__.py`, `tests/agents/profile_creation/__init__.py`, `tests/agents/reviewer/__init__.py`, `scripts/__init__.py`, `config/default.yaml`, `config/axes.yaml`
 
-- [ ] **Step 0: Create `.mise.toml`**
+- [x] **Step 0: Create `.mise.toml`**
 
 ```toml
 [tools]
@@ -143,7 +139,7 @@ _.python.venv = { path = ".venv", create = true }
 Run: `mise install`
 Expected: Python 3.11 and uv installed into the mise-managed toolchain.
 
-- [ ] **Step 1: Create `pyproject.toml`**
+- [x] **Step 1: Create `pyproject.toml`**
 
 ```toml
 [project]
@@ -178,7 +174,7 @@ where = ["."]
 include = ["paperfb*"]
 ```
 
-- [ ] **Step 2: Create `.gitignore`**
+- [x] **Step 2: Create `.gitignore`**
 
 ```
 __pycache__/
@@ -190,14 +186,13 @@ logs/
 evaluations/
 data/ccs_source.xml
 data/_ccs_descriptions_cache.json
-samples/**/manuscript.pdf
 .pytest_cache/
 *.egg-info/
 ```
 
-Note: `data/acm_ccs.json` and `data/finnish_names.json` ARE committed (prep-tool outputs consumed by the pipeline). Source PDFs under `samples/<paper-id>/manuscript.pdf` are NOT committed — only the converted `manuscript.md` and `expected_acm_classes.json` are.
+Note: `data/acm_ccs.json` and `data/finnish_names.json` ARE committed (prep-tool outputs consumed by the pipeline). Sample papers under `samples/<paper-id>/{manuscript.md, expected_acm_classes.json}` are committed; source PDFs are not in this repo (conversion happens outside the project).
 
-- [ ] **Step 3: Create package init files**
+- [x] **Step 3: Create package init files**
 
 Create empty files:
 
@@ -222,7 +217,7 @@ import sys
 raise SystemExit(main(sys.argv[1:]))
 ```
 
-- [ ] **Step 4: Create `config/default.yaml`**
+- [x] **Step 4: Create `config/default.yaml`**
 
 ```yaml
 transport: openai_chat_completions
@@ -248,7 +243,7 @@ paths:
   logs_dir: logs
 ```
 
-- [ ] **Step 5: Create `config/axes.yaml`**
+- [x] **Step 5: Create `config/axes.yaml`**
 
 Each entry is `{name, description}`. The description is a 1–2-sentence prompt-fragment Profile Creation splices into the persona prompt; rubric language from both review templates lives only here. See `docs/superpowers/specs/2026-04-27-merged-review-template-design.md` §3.
 
@@ -274,7 +269,7 @@ focuses:
   - {name: ethics,          description: "Ethical implications of methodology, dataset use, deployment, dual-use risks."}
 ```
 
-- [ ] **Step 6: Install deps and verify**
+- [x] **Step 6: Install deps and verify**
 
 ```bash
 uv sync --extra dev
@@ -285,7 +280,7 @@ Expected: `.venv` created, `uv.lock` generated, `pytest --collect-only` reports 
 
 **Convention for all subsequent tasks:** run `pytest` and `python` either via `uv run <cmd>` or by activating the venv first (`. .venv/bin/activate`). The plan writes bare commands for brevity.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add .mise.toml pyproject.toml uv.lock .gitignore paperfb/ tests/ scripts/ config/
@@ -299,7 +294,7 @@ git commit -m "Scaffold project layout, mise/uv toolchain, config, and deps"
 **Files:**
 - Create: `paperfb/config.py`, `tests/test_config.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_config.py`:
 
@@ -367,12 +362,12 @@ paths: {acm_ccs: a, reviews_dir: r, output: o, logs_dir: l}
         load_config(default, bad_axes)
 ```
 
-- [ ] **Step 2: Run to verify fail**
+- [x] **Step 2: Run to verify fail**
 
 Run: `pytest tests/test_config.py -v`
 Expected: FAIL (ImportError: cannot import from paperfb.config).
 
-- [ ] **Step 3: Implement `paperfb/config.py`**
+- [x] **Step 3: Implement `paperfb/config.py`**
 
 ```python
 from dataclasses import dataclass
@@ -477,12 +472,12 @@ def load_config(default_path: Path, axes_path: Path) -> Config:
     )
 ```
 
-- [ ] **Step 4: Run to verify pass**
+- [x] **Step 4: Run to verify pass**
 
 Run: `pytest tests/test_config.py -v`
 Expected: 3 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add paperfb/config.py tests/test_config.py
@@ -498,7 +493,7 @@ git commit -m "Add config loader with validation"
 
 The single cross-agent type surface. Every agent imports its inter-agent types from here; agents never import from each other.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_contracts.py`:
 
@@ -537,12 +532,12 @@ def test_review_required_fields_declared():
         assert f in REVIEW_REQUIRED_FIELDS
 ```
 
-- [ ] **Step 2: Run to verify fail**
+- [x] **Step 2: Run to verify fail**
 
 Run: `pytest tests/test_contracts.py -v`
 Expected: FAIL (module not found).
 
-- [ ] **Step 3: Implement `paperfb/contracts.py`**
+- [x] **Step 3: Implement `paperfb/contracts.py`**
 
 ```python
 """Shared cross-agent types.
@@ -599,12 +594,12 @@ REVIEW_REQUIRED_FIELDS = [
 
 > **Schema rationale (2026-04-27 review-template merge):** Reviewer JSON carries three free-text aspects only. Numeric ratings from both `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` are deliberately dropped — LLM-generated 1–5 scores were judged low-signal as researcher feedback. The rubric language survives only as prompt-side scaffolding via `axes.focuses[*].description` (see Task 1's `config/axes.yaml` and Task 8's persona prompt). See `docs/superpowers/specs/2026-04-27-merged-review-template-design.md` for the full delta.
 
-- [ ] **Step 4: Run to verify pass**
+- [x] **Step 4: Run to verify pass**
 
 Run: `pytest tests/test_contracts.py -v`
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add paperfb/contracts.py tests/test_contracts.py
@@ -618,7 +613,7 @@ git commit -m "Add shared contracts module for cross-agent types"
 **Files:**
 - Create: `paperfb/llm_client.py`, `tests/test_llm_client.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_llm_client.py`:
 
@@ -694,12 +689,12 @@ def test_usage_summary_accumulates_across_calls():
     assert summary["total_cost_usd"] == pytest.approx(0.0002)
 ```
 
-- [ ] **Step 2: Run to verify fail**
+- [x] **Step 2: Run to verify fail**
 
 Run: `pytest tests/test_llm_client.py -v`
 Expected: FAIL (module not found).
 
-- [ ] **Step 3: Implement `paperfb/llm_client.py`**
+- [x] **Step 3: Implement `paperfb/llm_client.py`**
 
 ```python
 import os
@@ -774,12 +769,12 @@ def from_env(default_model: str) -> LLMClient:
     return LLMClient(base_url=base_url, default_model=default_model)
 ```
 
-- [ ] **Step 4: Run to verify pass**
+- [x] **Step 4: Run to verify pass**
 
 Run: `pytest tests/test_llm_client.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add paperfb/llm_client.py tests/test_llm_client.py
@@ -1132,78 +1127,9 @@ git commit -m "Add Finnish names data-prep tool and generated list"
 
 ---
 
-## Task 4b: PDF → Markdown ingestion tool
+## Task 4b: REMOVED — PDF→markdown is out of project scope
 
-**Files:**
-- Create: `scripts/pdf_to_markdown.py`, `tests/test_pdf_to_markdown.py`, `tests/fixtures/tiny_paper.pdf`
-
-**Goal:** offline conversion of a source PDF to a Manuscript (markdown) for use under `samples/<paper-id>/manuscript.md`. The runtime CLI never invokes this — it consumes markdown only.
-
-- [ ] **Step 1: Add `pymupdf4llm` to `pyproject.toml`**
-
-Under `[project.optional-dependencies]` add a new `prep` extra so the heavier PDF dependency is opt-in:
-
-```toml
-prep = [
-    "pymupdf4llm>=0.0.17",
-]
-```
-
-Run `uv sync --extra prep`.
-
-- [ ] **Step 2: Write the failing test**
-
-Create `tests/test_pdf_to_markdown.py`:
-
-- Generates or reads `tests/fixtures/tiny_paper.pdf` (a 1-page synthetic PDF — produce it via `pymupdf` in a fixture builder, or commit a small known PDF).
-- Calls `pdf_to_markdown.convert(input_path, output_path)`.
-- Asserts the output file exists, is non-empty, and contains at least one `#` heading (or a known body string from the fixture).
-
-- [ ] **Step 3: Implement `scripts/pdf_to_markdown.py`**
-
-```python
-import argparse
-import pymupdf4llm
-
-def convert(input_pdf: str, output_md: str) -> None:
-    md = pymupdf4llm.to_markdown(input_pdf)
-    with open(output_md, "w", encoding="utf-8") as f:
-        f.write(md)
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input_pdf")
-    parser.add_argument("output_md")
-    args = parser.parse_args()
-    convert(args.input_pdf, args.output_md)
-    return 0
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
-Scope: text-first conversion. Tables are best-effort under `pymupdf4llm`. If a sample paper's tables are critical and lost, swap in `marker` later — out of scope for v1.
-
-- [ ] **Step 4: Convert sample papers**
-
-For each of the 3 chosen papers (`<paper-id>`):
-
-```bash
-mkdir -p samples/<paper-id>
-cp <paper>.pdf samples/<paper-id>/manuscript.pdf
-uv run python scripts/pdf_to_markdown.py samples/<paper-id>/manuscript.pdf samples/<paper-id>/manuscript.md
-# also commit samples/<paper-id>/expected_acm_classes.json with the ACM CCS classes published with the paper
-```
-
-Add `samples/**/manuscript.pdf` to `.gitignore` (decision: source PDFs are NEVER committed; only the converted `manuscript.md` and `expected_acm_classes.json` are committed). Contributors regenerate the markdown locally with `pdf_to_markdown.py` from a PDF they obtain themselves.
-
-- [ ] **Step 5: Run tests and commit**
-
-```bash
-uv run pytest tests/test_pdf_to_markdown.py
-git add scripts/pdf_to_markdown.py tests/test_pdf_to_markdown.py tests/fixtures/tiny_paper.pdf samples/
-git commit -m "Add PDF→markdown ingestion tool and sample manuscripts"
-```
+Manuscript-PDF→markdown conversion is performed outside this repo. The runtime contract (markdown only) is unchanged; the project simply does not own the conversion tool. Sample papers are delivered into `samples/<paper-id>/manuscript.md` by hand.
 
 ---
 

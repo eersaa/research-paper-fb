@@ -32,7 +32,7 @@ base_url_env: BASE_URL
 models: {default: x, classification: x, profile_creation: x, reviewer: x, judge: x}
 reviewers: {count: 2, core_focuses: [m], secondary_focus_per_reviewer: true, diversity: strict, seed: null}
 classification: {max_classes: 5}
-paths: {acm_ccs: a, reviews_dir: r, output: o, logs_dir: l}
+paths: {acm_ccs: a, finnish_names: f, reviews_dir: r, output: o, logs_dir: l}
 """)
     with pytest.raises(ValueError, match="count must be >= 3"):
         load_config(bad, Path("config/axes.yaml"))
@@ -55,7 +55,7 @@ base_url_env: BASE_URL
 models: {default: x, classification: x, profile_creation: x, reviewer: x, judge: x}
 reviewers: {count: 3, core_focuses: [methods], secondary_focus_per_reviewer: true, diversity: strict, seed: null}
 classification: {max_classes: 5}
-paths: {acm_ccs: a, reviews_dir: r, output: o, logs_dir: l}
+paths: {acm_ccs: a, finnish_names: f, reviews_dir: r, output: o, logs_dir: l}
 """)
     with pytest.raises(ValueError, match="must be \\{name, description\\}"):
         load_config(default, bad_axes)

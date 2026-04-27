@@ -27,7 +27,7 @@
 | **Persona**              | A concrete reviewer identity formed from (Reviewer Name + Specialty + Stance + Primary Focus + Secondary Focus); serves as a Reviewer Agent system prompt. | Profile, character        |
 | **Reviewer Name**        | A Finnish given name drawn from the Finnish nameday calendar (`data/finnish_names.json`), assigned to one Persona by the Sampler. Unique per Board; not part of the identity tuple under the Diversity Constraint. Surfaced in the rendered Review header. | Persona name, alias       |
 | **Reviewer ID**          | Internal opaque identifier for one Reviewer on a Board (e.g. `r1`, `r2`); used to correlate ReviewerTuple -> ReviewerProfile -> Review across the pipeline. Not human-facing; never rendered. | Reviewer index, slot      |
-| **Specialty**            | Per-Run reviewer grounding derived from one ACM CCS Class; anchors the reviewer as a domain expert. Not an Axis — drawn fresh each Run. | Background, expertise     |
+| **Specialty**            | Per-Run reviewer grounding derived from one ACM CCS Class; anchors the reviewer as a domain expert. Not an Axis — drawn fresh each Run. Carried as the full CCS Class dict in-memory across Sampler → Profile Creation → Reviewer; flattened to `path` (string) at the persisted Review JSON boundary. | Background, expertise     |
 | **Stance**               | Identity Axis value governing reviewer attitude (e.g. `critical`, `supportive`, `devil's-advocate`).                   | Attitude, tone            |
 | **Primary Focus**        | Identity Focus Axis value for a Reviewer; subject to the Diversity Constraint.                                         | Focus (unqualified), main focus |
 | **Secondary Focus**      | Supplementary Focus lens on a Reviewer; a depth dimension, allowed to overlap across the Board.                        | Extra focus, side focus   |
@@ -77,8 +77,8 @@
 
 | Term                       | Definition                                                                                                                       | Aliases to avoid       |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| **Offline Prep**           | Scripts run before / outside the runtime pipeline whose outputs are committed under `data/` and `samples/`. Three exist in v1: ACM CCS dump, Finnish names list, Manuscript Ingestion. | Prep, build step       |
-| **Manuscript Ingestion**   | Offline conversion of a source PDF to a Manuscript (markdown) via `scripts/pdf_to_markdown.py` (default backend `pymupdf4llm`). The runtime pipeline never invokes this; it consumes the resulting markdown only. | PDF parsing, conversion |
+| **Offline Prep**           | Scripts run before / outside the runtime pipeline whose outputs are committed under `data/` and `samples/`. Two exist in v1: ACM CCS dump, Finnish names list. | Prep, build step       |
+| **Manuscript Ingestion**   | Conversion of a source PDF to a Manuscript (markdown). **Out of this project's scope** — performed outside this repo; the runtime pipeline consumes markdown only. | PDF parsing, conversion |
 | **Finnish Nameday Calendar** | The traditional Finnish given-name calendar; source for `data/finnish_names.json`. First names only; committed; refreshed only when the pool needs to grow. | Name list, calendar    |
 
 ## Relationships
@@ -120,7 +120,7 @@
 - **"class" vs "classification"** — a **CCS Class** is a single tagged concept; **Classification** is the act/output of the Classification Agent (collection of CCS Classes). Don't say "a classification" for a single tag.
 - **"dimension" (Rubric) vs "axis" (Persona)** — both are "orthogonal variation" words. Canonical: **Axis** for Persona identity traits (**Stance**, **Primary Focus**); **Dimension** for **Rubric** scores. **Secondary Focus** is a depth lens, not an Axis; **Specialty** is not an Axis either.
 - **"focus" (bare)** — ambiguous now that Focus is split. Always qualify as **Primary Focus** or **Secondary Focus** in code, config keys, and docs. Bare "focus" is acceptable only when referring generically to the Focus Axis vocabulary (`config/axes.yaml`).
-- **"specialty" vs "CCS Class"** — a **Specialty** is a Persona-level concept derived from one **CCS Class**; a **CCS Class** is a taxonomy entry on the Manuscript. Don't treat them as synonyms.
+- **"specialty" vs "CCS Class"** — a **Specialty** is a Persona-level concept derived from one **CCS Class**; a **CCS Class** is a taxonomy entry on the Manuscript. Don't treat them as synonyms. Note also that **Specialty** has two on-the-wire shapes: a full dict in-memory (Sampler → Profile Creation → Reviewer Agent) and a bare `path` string in the persisted Review JSON read by the Renderer / Judge.
 - **"board" vs "reviewers"** — "the reviewers" often refers collectively to the Board. Fine informally, but use **Board** when emphasizing the N-as-a-set (e.g. Diversity Constraint applies across the Board).
 - **"review form" vs "Review Schema"** — the EuCNC/EDAS form in `review-template.txt` is no longer the canonical output shape. Canonical: **Review Schema** for the JSON the Reviewer emits (three Aspects + identity fields, no ratings); reserve "review form / template" for the historical EDAS source that contributed **Rubric Language** to Focus axis descriptions.
 - **"rating" / "rating dimension"** — removed from the system as of 2026-04-27. The Reviewer no longer emits numeric scores; only the **Judge Agent** produces numeric output (per **Rubric Dimension**). If you see "rating" in older docs, treat it as deleted, not deferred.

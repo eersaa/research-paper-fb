@@ -13,7 +13,13 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class ReviewerTuple:
-    """Deterministic sampler output; input to Profile Creation LLM step."""
+    """Deterministic sampler output; input to Profile Creation LLM step.
+
+    `specialty` carries the full ACM class dict ({path, weight, rationale,
+    description, ...}) in-memory so Profile Creation can ground the persona
+    prompt without re-reading data/acm_ccs.json. Flattened to `path` (str) at
+    the reviewer JSON wire boundary.
+    """
     id: str
     specialty: dict
     stance: str
@@ -23,7 +29,11 @@ class ReviewerTuple:
 
 @dataclass
 class ReviewerProfile:
-    """Profile Creation output; input to Reviewer Agent."""
+    """Profile Creation output; input to Reviewer Agent.
+
+    `specialty` shape matches ReviewerTuple.specialty (in-memory dict;
+    flattened to path string in the on-disk reviewer JSON).
+    """
     id: str
     specialty: dict
     stance: str

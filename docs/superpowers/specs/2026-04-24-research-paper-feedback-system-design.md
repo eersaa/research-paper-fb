@@ -8,7 +8,7 @@ Give a researcher constructive feedback on a manuscript by running it through a 
 
 Target user: researcher. Non-goals: does not rewrite the paper; does not use private papers as knowledge.
 
-The runtime pipeline ingests **markdown only**. PDF source manuscripts are converted to markdown ahead of time via an offline ingestion tool (§4.6); three published papers in this field whose ACM classifications are publicly known are converted and stored under `samples/` for evaluation.
+The runtime pipeline ingests **markdown only**. Manuscript-PDF→markdown conversion is performed outside this project; three published papers in this field whose ACM classifications are publicly known are delivered as markdown and stored under `samples/` for evaluation.
 
 ## 2. Requirements mapping
 
@@ -23,7 +23,7 @@ Offline preparation (run once, outputs committed under `data/` and `samples/`):
 ```
 [ACM CCS XML dump] ──► scripts/build_acm_ccs.py        ──► data/acm_ccs.json
 [Finnish nameday calendar] ──► scripts/build_finnish_names.py ──► data/finnish_names.json
-[paper.pdf]      ──► scripts/pdf_to_markdown.py        ──► samples/<id>/manuscript.md
+[paper.pdf]      ──► (converted outside this project)  ──► samples/<id>/manuscript.md
 ```
 
 Runtime (per Run):
@@ -178,13 +178,11 @@ Three offline scripts produce committed inputs the runtime pipeline reads. All r
 - For each node, generates a 1–2 sentence description via an LLM call through the proxy. Descriptions are cached to disk (`data/_ccs_descriptions_cache.json`) so reruns of the prep tool are cheap and deterministic.
 - Emits `data/acm_ccs.json` — list of `{path, leaf, description}` entries consumed by `lookup_acm`.
 
-#### 4.6 Manuscript ingestion: PDF → markdown (`scripts/pdf_to_markdown.py`)
+#### 4.6 Manuscript ingestion (out of project scope)
 
-- **Purpose:** convert PDF source manuscripts to markdown ahead of time so the runtime pipeline keeps its single-input contract (markdown only). Three published papers in this field with publicly known ACM classifications are converted up front and stored under `samples/<paper-id>/manuscript.md` for evaluation.
-- **Library:** `pymupdf4llm` as the v1 default — text-first, low setup cost, good enough for the body text the reviewers reason over. Tables come through best-effort; replacing the backend with `marker` is a future swap if quality blocks evaluation.
-- **CLI:** `uv run python scripts/pdf_to_markdown.py <input.pdf> <output.md>`.
-- **Scope:** strictly offline. The runtime CLI (`python -m paperfb`) does NOT auto-invoke this tool when handed a `.pdf` — it expects markdown.
-- **Sample layout:** for each evaluation paper, `samples/<paper-id>/` contains `manuscript.md` and `expected_acm_classes.json` (ground-truth classification published with the paper) — both committed. `manuscript.pdf` lives alongside on disk but is **gitignored** (redistribution / size hygiene); contributors regenerate the markdown locally with the prep tool. The Judge harness compares the agentic system's output against the committed fixtures.
+PDF→markdown conversion is performed **outside this project**. The runtime CLI (`python -m paperfb`) consumes markdown only and does not own a conversion tool.
+
+- **Sample layout:** for each evaluation paper, `samples/<paper-id>/` contains `manuscript.md` and `expected_acm_classes.json` (ground-truth classification published with the paper) — both committed. The Judge harness compares the agentic system's output against the committed fixtures.
 
 #### 4.7 Finnish names list (`scripts/build_finnish_names.py`)
 
@@ -312,7 +310,6 @@ research-paper-fb/
 ├── scripts/
 │   ├── build_acm_ccs.py
 │   ├── build_finnish_names.py
-│   ├── pdf_to_markdown.py
 │   └── judge.py
 ├── config/
 │   ├── default.yaml
@@ -320,10 +317,9 @@ research-paper-fb/
 ├── data/
 │   ├── acm_ccs.json
 │   └── finnish_names.json
-├── samples/                        # 3 published-with-CCS papers, prepared offline
+├── samples/                        # 3 published-with-CCS papers (markdown delivered externally)
 │   └── <paper-id>/
 │       ├── manuscript.md
-│       ├── manuscript.pdf          # gitignored — not committed
 │       └── expected_acm_classes.json
 ├── tests/
 │   ├── agents/
@@ -343,10 +339,8 @@ research-paper-fb/
 │   ├── test_renderer.py
 │   ├── test_build_acm_ccs.py
 │   ├── test_build_finnish_names.py
-│   ├── test_pdf_to_markdown.py
 │   ├── test_judge.py
 │   └── test_acceptance_live.py     # @pytest.mark.slow
-├── samples/                        # arXiv papers for eval
 ├── reviews/                        # gitignored
 ├── evaluations/                    # gitignored
 ├── logs/                           # gitignored
@@ -387,7 +381,7 @@ This layout lets two developers work on different agents in parallel with no fil
 
 - **Unit:** sampler (diversity guarantee + Finnish-name uniqueness), `lookup_acm` (deterministic), renderer (pure function — ratings table + name header), config loader.
 - **Integration with mocked LLM:** orchestrator end-to-end with stubbed `llm_client`; verifies wiring, concurrency, error paths (skipped reviewer), tool-call round-trips. Includes a Classification test that asserts the keyword-extraction phase runs and is logged but does NOT show up in the `ClassificationResult` passed downstream.
-- **Offline data prep:** `pdf_to_markdown.py` smoke test on a tiny fixture PDF (asserts non-empty markdown body, headings preserved). `build_finnish_names.py` test asserts deterministic output and a minimum pool size (`>= reviewers.count`).
+- **Offline data prep:** `build_finnish_names.py` test asserts deterministic output and a minimum pool size (`>= reviewers.count`).
 - **TDD for judge:** fixtures of good/bad reviews; score bounds per dimension; implementation satisfies them.
 - **Acceptance test (live proxy, `@pytest.mark.slow`):** tiny manuscript fixture, end-to-end run. Asserts: `final_report.md` exists; per-reviewer sections match N; ACM classes present; reviewer stances distinct per diversity rule; reviewer names distinct and drawn from `data/finnish_names.json`; no manuscript text leaks to stdout or logs. Excluded from default `pytest`, included via `pytest -m slow`. Runs in CI on demand only (cost).
 
@@ -395,26 +389,25 @@ This layout lets two developers work on different agents in parallel with no fil
 
 - RAG over external corpora (arXiv, OpenResearch).
 - Cross-run memory / adaptability.
-- PDF as runtime input — converted offline via `scripts/pdf_to_markdown.py` (§4.6); the runtime CLI still consumes only markdown. Vision input remains out of scope.
+- PDF as runtime input — converted to markdown outside this project (§4.6); the runtime CLI still consumes only markdown. Vision input remains out of scope.
+- Manuscript-PDF→markdown conversion — handled outside this project; this repo does not own a conversion tool.
 - Human-in-the-loop.
 - Reviewer tools beyond `write_review` (e.g. related-paper retrieval).
 - Synthesis agent that merges reviews into a chair report.
 - Embeddings-based ACM classification (current taxonomy is small enough for deterministic lookup).
-- Stronger PDF backends (`marker`, `docling`) — swap once `pymupdf4llm` text fidelity becomes the bottleneck.
 
 ## 14. Unresolved questions
 
 Open:
 
-- **Sample papers — concrete picks.** 3 papers in this field with publicly published ACM CCS classifications. User will source titles + DOIs and prepare them through the ingestion tool.
-- **`pymupdf4llm` table fidelity on the chosen samples.** v1 uses it as default; if extracted markdown loses critical tables on any of the 3 samples, swap-in `marker` becomes a follow-up.
+- **Sample papers — concrete picks.** 3 papers in this field with publicly published ACM CCS classifications. User sources the titles + DOIs and delivers each as `samples/<paper-id>/manuscript.md` + `expected_acm_classes.json` (PDF→markdown conversion happens outside this project).
 
 Prior items (resolved):
 
 - ACM CCS source — Offline data-prep tool fetches ACM's CCS 2012 structured dump, parses full tree, generates per-node descriptions via LLM (cached). See §4.5.1.
-- CLI UX — `uv run python -m paperfb <manuscript.md>`; only manuscript path required; all other flags optional. Markdown only at the runtime boundary; PDFs are converted offline (§4.6).
+- CLI UX — `uv run python -m paperfb <manuscript.md>`; only manuscript path required; all other flags optional. Markdown only at the runtime boundary; PDFs are converted outside this project.
 - Judge rubric weighting — Equal weighting across 5 Likert dimensions; report per-dimension scores + arithmetic mean.
-- Manuscript ingestion — PDF→markdown handled offline via `scripts/pdf_to_markdown.py` (default backend `pymupdf4llm`). See §4.6.
+- Manuscript ingestion — out of project scope; markdown is delivered by hand into `samples/<paper-id>/manuscript.md`. See §4.6.
 - Reviewer relatability — Profile Creation sampler picks a unique Finnish given name per reviewer from `data/finnish_names.json`; name surfaces in persona prompt and rendered review header. See §4.2, §4.4, §4.7.
 - Keyword extraction — embedded in the Classification agent loop; logged but not propagated downstream. `ClassificationResult` contract unchanged. See §4.1.
 - Reviewer output schema — three free-text aspects only (`strong_aspects`, `weak_aspects`, `recommended_changes`). Numeric ratings dropped; rubric language from `review-template.txt` and `review-template2.txt` absorbed into focus-axis descriptions on the prompt side. See [merged review template delta](2026-04-27-merged-review-template-design.md). `section_comments` dropped earlier in v1.
@@ -427,7 +420,7 @@ The full design above is the v1 target. **Build it in two waves:**
 **Wave 1 — core pipeline (must-have for a working v1):**
 
 1. Scaffolding, config, contracts, LLM client.
-2. Offline prep: ACM CCS dump, Finnish names list, PDF→markdown.
+2. Offline prep: ACM CCS dump, Finnish names list. (Manuscript-PDF→markdown is handled outside this project.)
 3. Classification Agent (incl. keyword extraction phase).
 4. Profile Creation Agent (sampler with Finnish-name pick + LLM persona step).
 5. Reviewer Agent (template-aligned JSON schema).

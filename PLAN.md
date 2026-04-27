@@ -10,7 +10,7 @@ Offline prep (run once, committed):
 
 - `scripts/build_acm_ccs.py` → `data/acm_ccs.json`
 - `scripts/build_finnish_names.py` → `data/finnish_names.json`
-- `scripts/pdf_to_markdown.py` → `samples/<paper-id>/manuscript.md` (3 published-with-CCS papers, used for evaluation)
+- Sample manuscripts: 3 published-with-CCS papers delivered as `samples/<paper-id>/manuscript.md` (PDF→markdown conversion happens outside this project)
 
 Runtime:
 
@@ -30,7 +30,7 @@ Separate evaluation harness (deferred — built last): **Judge Agent** scores re
 
 ## Key decisions
 
-- **Runtime input:** markdown only. PDFs are converted offline via `scripts/pdf_to_markdown.py` (default backend `pymupdf4llm`); the runtime CLI never sees PDF.
+- **Runtime input:** markdown only. PDF→markdown conversion is performed outside this project; the runtime CLI never sees PDF.
 - **State:** stateless across runs. Shared-context memory future work.
 - **N reviewers:** default 3, configurable. Diversity constraint: `(stance, primary_focus)` unique across reviewers; reviewer **names** also unique per Board.
 - **Persona formula:** `name (Finnish given name from calendar) + specialty (from ACM classes, round-robin across reviewers) + stance + primary_focus + secondary_focus`. Core focuses always covered.
@@ -60,14 +60,14 @@ Framework: bare `openai` Python SDK with `base_url` pointed at the proxy, plus a
 
 ## Unresolved questions
 
-- `pymupdf4llm` table fidelity on chosen samples — swap to `marker` if blocking.
+- **Sample papers — concrete picks.** 3 published-with-CCS papers needed as evaluation fixtures. User sources titles + DOIs and delivers each as `samples/<paper-id>/{manuscript.md, expected_acm_classes.json}` (PDF→markdown conversion is performed outside this project).
 
 Prior items resolved:
 
 - ACM CCS source → offline data-prep tool downloads CCS 2012, parses full tree, generates per-node descriptions via LLM (cached), emits `data/acm_ccs.json`.
-- CLI → `uv run python -m paperfb <manuscript.md>`; markdown only at runtime; PDFs converted offline.
+- CLI → `uv run python -m paperfb <manuscript.md>`; markdown only at runtime; PDF→markdown handled outside the project.
 - Judge rubric → equal weighting across 5 Likert dimensions; per-dimension + arithmetic mean.
-- Manuscript ingestion → offline `scripts/pdf_to_markdown.py` (default `pymupdf4llm`).
+- Manuscript ingestion → out of project scope; markdown delivered by hand.
 - Reviewer relatability → unique Finnish given name per reviewer from committed calendar list.
 - Keyword extraction → inside Classification loop; logged not propagated.
 - Reviewer schema → three free-text aspects only; numeric ratings dropped (2026-04-27 review-template merge). `section_comments` dropped earlier in v1.
