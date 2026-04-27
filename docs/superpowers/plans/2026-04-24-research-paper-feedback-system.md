@@ -2367,8 +2367,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         for i in range(3)
     ]
     # need concrete ReviewerTuple/Profile types for real code path:
-    from paperfb.agents.profile_creation.sampler import ReviewerTuple
-    from paperfb.agents.profile_creation import ReviewerProfile
+    from paperfb.contracts import ReviewerTuple, ReviewerProfile
     tuples = [
         ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML", "weight": "High"},
                       stance="critical", primary_focus=["methods", "results", "novelty"][i],
@@ -2416,8 +2415,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
 
 
 def test_reviewer_failure_is_skipped(cfg, tmp_path):
-    from paperfb.agents.profile_creation.sampler import ReviewerTuple
-    from paperfb.agents.profile_creation import ReviewerProfile
+    from paperfb.contracts import ReviewerTuple, ReviewerProfile
     tuples = [ReviewerTuple(id=f"r{i+1}", specialty={"path": "ML"}, stance="critical",
                              primary_focus=["methods", "results", "novelty"][i],
                              secondary_focus=None) for i in range(3)]
@@ -2470,8 +2468,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from paperfb.config import Config
-from paperfb.contracts import SkippedReviewer
-from paperfb.agents.classification import classify_manuscript, ClassificationResult
+from paperfb.contracts import ClassificationResult, SkippedReviewer
+from paperfb.agents.classification import classify_manuscript
 from paperfb.agents.profile_creation import create_profiles, sample_reviewer_tuples
 from paperfb.agents.reviewer import run_reviewer
 from paperfb.renderer import render_report
