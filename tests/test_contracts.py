@@ -30,3 +30,10 @@ def test_review_required_fields_declared():
     for f in ["reviewer_id", "reviewer_name", "stance", "primary_focus",
               "strong_aspects", "weak_aspects", "recommended_changes"]:
         assert f in REVIEW_REQUIRED_FIELDS
+
+
+def test_skipped_reviewer_shape():
+    from paperfb.contracts import SkippedReviewer
+    s: SkippedReviewer = {"id": "r2", "reason": "tool failure"}
+    assert s["id"] == "r2"
+    assert s["reason"] == "tool failure"
