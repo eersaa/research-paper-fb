@@ -41,14 +41,14 @@ def test_live_pipeline_produces_report(cfg_tmp, manuscript, tmp_path):
     text = report.read_text()
 
     # (b) per-reviewer sections match N
-    assert text.count("## Reviewer ") == cfg_tmp.reviewers.count
+    assert text.count("## Review by ") == cfg_tmp.reviewers.count
 
     # (c) ACM classes present
     assert "## ACM classification" in text
     assert len(result.classes) >= 1
 
     # (d) reviewer stances distinct per (stance, primary_focus)
-    pairs = {(r["stance"], r["focus"]) for r in result.reviews}
+    pairs = {(r["stance"], r["primary_focus"]) for r in result.reviews}
     assert len(pairs) == len(result.reviews), "stance/focus pair duplication"
 
     # (e) no manuscript text leaks to stdout/logs
