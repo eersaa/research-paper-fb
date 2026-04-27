@@ -25,6 +25,7 @@ class ReviewerTuple:
     stance: str
     primary_focus: str
     secondary_focus: Optional[str]
+    name: str = ""   # Finnish given name assigned by the sampler
 
 
 @dataclass
