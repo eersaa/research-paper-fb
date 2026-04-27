@@ -65,6 +65,6 @@ def create_profiles(
             stance=t.stance,
             primary_focus=t.primary_focus,
             secondary_focus=t.secondary_focus,
-            persona_prompt=res.content.strip(),
+            persona_prompt=(res.content or "").strip(),
         ))
     return profiles
