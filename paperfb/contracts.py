@@ -41,11 +41,19 @@ class ClassificationResult:
 
 REVIEW_REQUIRED_FIELDS = [
     "reviewer_id",
+    "reviewer_name",
     "stance",
-    "focus",
-    "strengths",
-    "weaknesses",
-    "suggestions",
-    "section_comments",
-    "overall_assessment",
+    "primary_focus",
+    "ratings",
+    "strong_aspects",
+    "weak_aspects",
+    "recommended_changes",
+]
+
+RATING_DIMENSIONS = [
+    "relevance_and_timeliness",
+    "technical_content_and_rigour",
+    "novelty_and_originality",
+    "quality_of_presentation",
+    "overall_recommendation",
 ]

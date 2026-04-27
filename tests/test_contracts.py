@@ -3,6 +3,7 @@ from paperfb.contracts import (
     ReviewerProfile,
     ClassificationResult,
     REVIEW_REQUIRED_FIELDS,
+    RATING_DIMENSIONS,
 )
 
 
@@ -27,6 +28,16 @@ def test_classification_result_holds_list():
 
 
 def test_review_required_fields_declared():
-    for f in ["reviewer_id", "stance", "focus", "strengths", "weaknesses",
-              "suggestions", "section_comments", "overall_assessment"]:
+    for f in ["reviewer_id", "reviewer_name", "stance", "primary_focus",
+              "ratings", "strong_aspects", "weak_aspects", "recommended_changes"]:
         assert f in REVIEW_REQUIRED_FIELDS
+
+
+def test_rating_dimensions_match_template():
+    assert RATING_DIMENSIONS == [
+        "relevance_and_timeliness",
+        "technical_content_and_rigour",
+        "novelty_and_originality",
+        "quality_of_presentation",
+        "overall_recommendation",
+    ]
