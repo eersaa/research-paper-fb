@@ -1981,7 +1981,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 from paperfb.agents.reviewer import run_reviewer
-from paperfb.agents.profile_creation import ReviewerProfile
+from paperfb.contracts import ReviewerProfile
 
 
 def _tool_call(name, args):
@@ -2055,7 +2055,7 @@ Expected: FAIL (import error).
 ```python
 import json
 from pathlib import Path
-from paperfb.agents.profile_creation import ReviewerProfile
+from paperfb.contracts import ReviewerProfile
 from paperfb.agents.reviewer.tools import write_review, TOOL_SCHEMA, ReviewValidationError
 
 REVIEWER_USER_TEMPLATE = """Manuscript follows between the markers.
