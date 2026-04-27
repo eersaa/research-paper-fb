@@ -31,16 +31,69 @@ Each agent is a **self-contained subpackage** under `paperfb/agents/` with one p
 - Only `orchestrator.py` imports multiple agents (via their public APIs).
 - Public function shape: `def <verb>(required_input, cfg: Config, llm: LLMClient) -> OutputType`. Stateless, deps explicit.
 
-**Two-developer split (suggested):**
+**Two-developer split — module-based:**
 
-After Task 1 (scaffolding, shared), Task 2 (config), Task 2b (contracts) — both developers can work in parallel:
+The work is broken into **self-contained modules**. Each module is a complete, independently testable deliverable (code + prompts + tools + tests + offline-prep where applicable). Within a module, tasks run sequentially. Across modules, the only contact surface is `paperfb/contracts.py` — so two developers can hold one module each at any time without stepping on each other.
 
-- **Track A (LLM-integration path):** Task 3 (LLM client) → Task 4 (ACM CCS prep) → Task 5 (lookup_acm) → Task 6 (Classification agent, incl. keyword-extraction phase) → Task 8 (Profile Creation agent, LLM part) → Task 10 (Reviewer agent, EDAS-aligned schema).
-- **Track B (deterministic / supporting):** Task 4a (Finnish names prep) → Task 4b (PDF→markdown tool) → Task 7 (Profile sampler, incl. Finnish-name pick) → Task 9 (write_review tool) → Task 11 (Renderer, ratings table + name header).
+The modules sit in three phases, gated by data dependencies:
 
-Task 12 (Orchestrator) is the merge point. Tasks 13, 15, 16 close out **Wave 1**.
+| Phase | Module | Tasks | Owner | Notes |
+|-------|--------|-------|-------|-------|
+| **0. Foundation** | Foundation | 1, 2, 2b, 3 | pair (or one dev solo) | Scaffolding, config, contracts, LLM client. Must finish before any Phase-1 module can claim "done." Sub-tasks 4a/4b/7 can technically start in parallel with Task 3 since they don't use the LLM client. |
+| **1. Independent modules** (parallelizable) | M1 Classification | 4, 5, 6 | Dev A | ACM CCS data prep → `lookup_acm` tool → Classification agent (with keyword-extraction phase). Public API: `classify(manuscript, cfg, llm) -> ClassificationResult`. |
+| | M2 Profile Creation | 4a, 7, 8 | Dev B | Finnish names data prep → deterministic Sampler (with name picker) → LLM persona step. Public API: `create_profiles(classes, cfg, llm) -> list[ReviewerProfile]`. |
+| | M3 Reviewer | 9, 10 | Dev A (after M1) | `write_review` tool → Reviewer agent (EDAS-aligned schema). Public API: `review(profile, manuscript, cfg, llm) -> Path`. |
+| | M4 Manuscript Ingestion | 4b | Dev B (slot anywhere) | Standalone PDF→markdown tool. No agent dependency. Small — fills idle time between M2 and M5 for Dev B. |
+| | M5 Renderer | 11 | Dev B (after M3 schema is stable) | Pure code, no LLM. Depends only on the Review JSON schema (frozen in `contracts.py` + a fixture from M3). Can be drafted against the schema and finalised once M3 commits. |
+| **2. Integration** | I1 Orchestrator + CLI | 12, 13 | whichever dev finishes Phase 1 first | Wires the three agent public APIs + Renderer. |
+| | I2 Live acceptance + README | 15, 16 | the other dev | Closes Wave 1. Needs I1 done. |
 
-**Wave 2 (only after Wave 1 ships):** Task 14 (Judge) → Task 14b (cost / token-usage reporting) → Task 14c (EDAS rubric capture).
+After Wave 1 ships end-to-end, **Wave 2** modules — also independent — can be picked up one at a time:
+
+| Phase | Module | Tasks | Owner | Notes |
+|-------|--------|-------|-------|-------|
+| **3. Wave 2** | W1 Judge | 14 | either dev | TDD against fixture reviews. No runtime dependency. |
+| | W2 Cost reporting | 14b | either dev | Aggregation layer over already-logged JSONL. |
+| | W3 EDAS rubric capture | 14c | whoever has TPC access | Backfill `data/edas_rubric.json` and tighten Reviewer prompts. |
+
+**Why this assignment:**
+
+- Dev A handles the two LLM-loop-with-tool agents (Classification, Reviewer) — same mental model.
+- Dev B handles the deterministic / supporting work (Sampler, Ingestion, Renderer) plus the more constrained Profile Creation LLM step.
+- M4 Ingestion (small, standalone) drops into Dev B's queue between M2 and M5 to balance load while Dev A is still on M1/M3.
+- M5 Renderer's only schema dependency on M3 is mitigated by freezing the Review JSON shape in `contracts.py` early — Dev B can mock M3's output and develop the Renderer against it in parallel.
+
+**Module handoff diagram:**
+
+```
+       ┌──────────────────────────┐
+       │  0. Foundation           │  pair
+       │  Tasks 1, 2, 2b, 3       │
+       └────────────┬─────────────┘
+                    │
+        ┌───────────┴────────────┐
+        ▼                        ▼
+  Dev A: M1 Classification    Dev B: M2 Profile Creation
+        │                        │
+        ▼                        ▼
+  Dev A: M3 Reviewer          Dev B: M4 Ingestion
+        │                        │
+        │                        ▼
+        │                     Dev B: M5 Renderer  ◄── depends on M3 schema (frozen in contracts.py)
+        │                        │
+        └────────────┬───────────┘
+                     ▼
+            I1 Orchestrator + CLI
+                     │
+                     ▼
+            I2 Live acceptance + README
+                     │
+                     ▼
+                === Wave 1 ships ===
+                     │
+                     ▼
+            W1 Judge → W2 Cost → W3 Rubric (Wave 2, any order)
+```
 
 ---
 
