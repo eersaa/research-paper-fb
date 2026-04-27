@@ -17,8 +17,8 @@ Runtime:
 1. User provides manuscript (markdown only; PDFs are converted offline).
 2. **Classification Agent** runs a two-phase loop: extract paper-keywords (or synthesise from title/abstract/headings), then drive `lookup_acm` queries to pick 2–5 ACM CCS classes with weights. Keywords are logged but not propagated downstream.
 3. **Profile Creation Agent** samples N reviewer tuples `(specialty from ACM classes, stance, primary_focus, secondary_focus)`, picks a unique Finnish given name per reviewer from `data/finnish_names.json`, and generates a persona for each. Core focuses (`methods, results, novelty`) always covered.
-4. **Reviewer Agents** (N in parallel) each emit a review JSON via `write_review`. Schema mirrors `review-template.txt` (EuCNC/6G EDAS form): five 1–5 ratings with descriptor labels + three free-text aspects (Strong / Weak / Recommended Changes).
-5. **Renderer** (pure code) compiles all review JSONs into `final_report.md`. Each review section opens with the reviewer's Finnish name and shows the ratings table.
+4. **Reviewer Agents** (N in parallel) each emit a review JSON via `write_review`. Schema = three free-text aspects only (Strong / Weak / Recommended Changes); numeric ratings are deliberately dropped — see [docs/superpowers/specs/2026-04-27-merged-review-template-design.md](docs/superpowers/specs/2026-04-27-merged-review-template-design.md).
+5. **Renderer** (pure code) compiles all review JSONs into `final_report.md`. Each review section opens with the reviewer's Finnish name and renders the three aspects as labeled prose subsections.
 
 Separate evaluation harness (deferred — built last): **Judge Agent** scores reports on specificity, actionability, persona-fidelity, coverage, non-redundancy.
 
@@ -34,10 +34,10 @@ Separate evaluation harness (deferred — built last): **Judge Agent** scores re
 - **State:** stateless across runs. Shared-context memory future work.
 - **N reviewers:** default 3, configurable. Diversity constraint: `(stance, primary_focus)` unique across reviewers; reviewer **names** also unique per Board.
 - **Persona formula:** `name (Finnish given name from calendar) + specialty (from ACM classes, round-robin across reviewers) + stance + primary_focus + secondary_focus`. Core focuses always covered.
-- **Axes:** configurable in `config/axes.yaml`. Defaults cover 8 stances × 8 focuses; 3 core focuses.
+- **Axes:** configurable in `config/axes.yaml`. Defaults cover 8 stances × 8 focuses; 3 core focuses. Each entry carries a `description` that gets spliced into the persona prompt — this is where the rubric language from both review templates lives.
 - **ACM tool:** deterministic JSON lookup over a prebuilt CCS dump, not embeddings.
 - **Classification flow:** keyword extraction (paper-stated or synthesised) → `lookup_acm` queries → class selection. Keywords logged, not propagated downstream — Profile Creation receives `{classes: [...]}` only.
-- **Reviewer schema:** mirrors `review-template.txt` (EuCNC/6G EDAS form). 5 numeric ratings each with descriptor label, plus 3 free-text aspects (single strings).
+- **Reviewer schema:** three free-text aspects only (`strong_aspects`, `weak_aspects`, `recommended_changes`). Numeric ratings dropped — LLM-generated 1–5 scores were judged low-signal as researcher feedback. Rubric language from `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` is absorbed into focus-axis descriptions on the prompt side. See [docs/superpowers/specs/2026-04-27-merged-review-template-design.md](docs/superpowers/specs/2026-04-27-merged-review-template-design.md).
 - **Reviewer naming:** sampler picks a unique Finnish given name from `data/finnish_names.json` per reviewer; surfaced in persona prompt and rendered review header.
 - **Transport:** OpenAI `/chat/completions` via the provided proxy — routes to any course-recommended text model (Claude Haiku, GPT-4.1-mini, Gemini Flash).
 - **Default model:** `anthropic/claude-3.5-haiku`; judge uses a different model for bias mitigation.
@@ -60,7 +60,6 @@ Framework: bare `openai` Python SDK with `base_url` pointed at the proxy, plus a
 
 ## Unresolved questions
 
-- EDAS rubric labels — 13/25 cells unknown (form gated behind authenticated EDAS). Capture via TPC screenshot or saved review HTML; tracked as Wave 2 Task 14c.
 - `pymupdf4llm` table fidelity on chosen samples — swap to `marker` if blocking.
 
 Prior items resolved:
@@ -71,5 +70,6 @@ Prior items resolved:
 - Manuscript ingestion → offline `scripts/pdf_to_markdown.py` (default `pymupdf4llm`).
 - Reviewer relatability → unique Finnish given name per reviewer from committed calendar list.
 - Keyword extraction → inside Classification loop; logged not propagated.
-- Reviewer schema → mirrors `review-template.txt`; `section_comments` dropped in v1.
+- Reviewer schema → three free-text aspects only; numeric ratings dropped (2026-04-27 review-template merge). `section_comments` dropped earlier in v1.
+- EDAS rubric labels → no longer needed; reviewer no longer emits numeric ratings, so the Wave 2 Task 14c follow-up is removed.
 - Build order → Wave 1 (core pipeline) before Wave 2 (judge + cost reporting + rubric capture).

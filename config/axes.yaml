@@ -1,18 +1,19 @@
 stances:
-  - neutral
-  - supportive
-  - critical
-  - skeptical
-  - rigorous
-  - pragmatic
-  - devil's-advocate
-  - visionary
+  - {name: neutral,          description: "Balanced; weighs strengths and weaknesses without prior tilt."}
+  - {name: supportive,       description: "Constructive; emphasises what works and how to extend it."}
+  - {name: critical,         description: "Probing; surfaces problems the authors may have downplayed."}
+  - {name: skeptical,        description: "Treats every claim as unproven until the evidence forces belief."}
+  - {name: rigorous,         description: "Holds the work to formal correctness, statistical and methodological standards."}
+  - {name: pragmatic,        description: "Asks whether results matter in practice, not just in theory."}
+  - {name: devil's-advocate, description: "Argues the opposite of whatever the paper claims, to stress-test it."}
+  - {name: visionary,        description: "Reads for long-horizon impact and what this work makes possible next."}
+
 focuses:
-  - methods
-  - results
-  - impact
-  - novelty
-  - clarity
-  - related-work
-  - reproducibility
-  - ethics
+  - {name: methods,         description: "Technical content and scientific rigour: completeness of analysis, soundness of models, validity of methodology. (Content / Technical Content & Rigour)"}
+  - {name: results,         description: "Whether reported results actually support the claims; effect sizes, baselines, statistical strength. (Technical Content & Rigour)"}
+  - {name: novelty,         description: "Originality: novel ideas vs incremental variations on a well-investigated subject. (Originality / Novelty & Originality)"}
+  - {name: clarity,         description: "Quality of presentation: organisation, English, figures, references — does the paper communicate its message? (Clarity / Quality of Presentation)"}
+  - {name: impact,          description: "Relevance and timeliness within the paper's research area; potential to influence the field."}
+  - {name: related-work,    description: "Coverage and accuracy of references; positioning relative to existing literature."}
+  - {name: reproducibility, description: "Whether a reader could rebuild the experiment from what is reported."}
+  - {name: ethics,          description: "Ethical implications of methodology, dataset use, deployment, dual-use risks."}

@@ -36,9 +36,15 @@ class PathsConfig:
 
 
 @dataclass(frozen=True)
+class AxisItem:
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
 class AxesConfig:
-    stances: list[str]
-    focuses: list[str]
+    stances: list[AxisItem]
+    focuses: list[AxisItem]
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,17 @@ class Config:
     axes: AxesConfig
 
 
+def _parse_axis_items(raw: list, axis_name: str) -> list[AxisItem]:
+    items: list[AxisItem] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or "name" not in entry or "description" not in entry:
+            raise ValueError(
+                f"axes.{axis_name} entries must be {{name, description}} dicts; got {entry!r}"
+            )
+        items.append(AxisItem(name=entry["name"], description=entry["description"]))
+    return items
+
+
 def load_config(default_path: Path, axes_path: Path) -> Config:
     with default_path.open() as f:
         d = yaml.safe_load(f)
@@ -62,10 +79,14 @@ def load_config(default_path: Path, axes_path: Path) -> Config:
     if reviewers_count < 3:
         raise ValueError("reviewers.count must be >= 3")
 
-    axes = AxesConfig(stances=a["stances"], focuses=a["focuses"])
+    axes = AxesConfig(
+        stances=_parse_axis_items(a["stances"], "stances"),
+        focuses=_parse_axis_items(a["focuses"], "focuses"),
+    )
+    focus_names = {f.name for f in axes.focuses}
     core = d["reviewers"]["core_focuses"]
     for f in core:
-        if f not in axes.focuses:
+        if f not in focus_names:
             raise ValueError(f"core focus '{f}' not in axes.focuses")
 
     return Config(

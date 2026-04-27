@@ -1,6 +1,6 @@
 # Agentic research paper feedback system — design
 
-Status: approved (brainstorming). Date: 2026-04-24.
+Status: approved (brainstorming). Date: 2026-04-24. Reviewer schema + axis enrichment updated 2026-04-27 — see [merged review template delta](2026-04-27-merged-review-template-design.md).
 
 ## 1. Purpose
 
@@ -138,39 +138,33 @@ Two-phase hybrid:
 
 - **Input:** manuscript markdown + own persona prompt. (ACM classes are NOT passed separately — they are already baked into the persona prompt.)
 - **Tool:** `write_review(reviewer_id, review_json)` — writes to `reviews/<reviewer_id>.json`. One file per reviewer; concurrency-safe.
-- **Review JSON schema** (mirrors `review-template.txt`, an IEEE-style conference reviewing form — five 1–5 ratings each with a descriptor label, plus three free-text aspects as single strings):
+- **Review JSON schema** — three free-text aspects only. Numeric ratings from both source templates are deliberately dropped (LLM-generated 1–5 scores were judged low-signal; rubric language survives only as prompt-side scaffolding via focus-axis descriptions in §5). Per the [merged review template delta](2026-04-27-merged-review-template-design.md):
 
   ```json
   {
-    "reviewer_id": "r1",
-    "reviewer_name": "Aino",
-    "specialty": "...",
-    "stance": "...",
-    "primary_focus": "...",
-    "secondary_focus": "...",
-    "profile_summary": "...",
-    "ratings": {
-      "relevance_and_timeliness":     {"score": 4, "label": "Good"},
-      "technical_content_and_rigour": {"score": 3, "label": "Valid work but limited contribution"},
-      "novelty_and_originality":      {"score": 4, "label": "Significant original work and novel results"},
-      "quality_of_presentation":      {"score": 4, "label": "Well written"},
-      "overall_recommendation":       {"score": 4, "label": "Accept"}
-    },
+    "reviewer_id":        "r1",
+    "reviewer_name":      "Aino",
+    "specialty":          "...",
+    "stance":             "...",
+    "primary_focus":      "...",
+    "secondary_focus":    "... | null",
+    "profile_summary":    "...",
     "strong_aspects":      "...",
     "weak_aspects":        "...",
     "recommended_changes": "..."
   }
   ```
 
-- **Rating dimensions** map 1:1 onto the IEEE-style template fields. `score` is integer 1–5; `label` is the descriptor for that score on that dimension. The full canonical descriptor table is partially captured in `review-template.txt` and is otherwise treated as an open follow-up (see §14) — the agent emits the descriptor that best fits the score, falling back to `null` when the canonical wording is unknown.
-- **Prompt focus:** stay in persona; ground comments in actual manuscript text; never rewrite the paper (non-goal); use the persona's assigned Finnish given name when self-referencing.
+- **`REVIEW_REQUIRED_FIELDS`:** `reviewer_id, reviewer_name, stance, primary_focus, strong_aspects, weak_aspects, recommended_changes`. `RATING_DIMENSIONS` is removed.
+- **Prompt focus:** stay in persona; ground each of the three free-text aspects in the reviewer's primary focus, with secondary focus colouring depth where natural (implicit focus angle — no separate `focus_commentary` field); cite specific manuscript text; never rewrite the paper (non-goal); use the persona's assigned Finnish given name when self-referencing.
 
 ### 4.4 Renderer (not an agent)
 
 Pure code. Reads all `reviews/*.json` + classification output + profile metadata. Emits `final_report.md`:
 
 - Header: assigned ACM classes.
-- Per-reviewer section: header line `## Review by {reviewer_name} — {specialty}` (Finnish given name surfaced for relatability), one-line profile blurb (stance + primary/secondary focus), a five-row ratings table (`{dimension} | {score}/5 | {label}`), then the three free-text aspects (strong / weak / recommended changes).
+- Per-reviewer section: header line `## Review by {reviewer_name} — {specialty}` (Finnish given name surfaced for relatability), one-line profile blurb (stance + primary/secondary focus), then the three free-text aspects as labeled prose subsections (`### Strong aspects`, `### Weak aspects`, `### Recommended changes`).
+- No ratings table — numeric ratings are no longer part of the review schema (see §4.3).
 - No cross-reviewer synthesis in v1.
 
 ### 4.5 Offline data preparation tools
@@ -207,15 +201,17 @@ Three offline scripts produce committed inputs the runtime pipeline reads. All r
 
 ## 5. Axis vocabularies (default, configurable via `config/axes.yaml`)
 
-**Stances:** `neutral, supportive, critical, skeptical, rigorous, pragmatic, devil's-advocate, visionary`.
+Each stance and focus is a `{name, description}` entry. The description is a 1–2-sentence prompt-fragment naming what to look for; it is spliced into the persona prompt by Profile Creation (§4.2) so reviewers receive concrete, rubric-aligned guidance on what their stance/focus means in practice. Rubric language from `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` is absorbed into these descriptions and lives only on the prompt side — see [merged review template delta](2026-04-27-merged-review-template-design.md).
 
-**Focuses:** `methods, results, impact, novelty, clarity, related-work, reproducibility, ethics`.
+**Stances** (8): `neutral, supportive, critical, skeptical, rigorous, pragmatic, devil's-advocate, visionary` — each with description.
 
-**Core focuses (must be covered on every board):** `methods, results, novelty`. Sampler guarantees each core focus is assigned as some reviewer's primary focus when N ≥ |core_focuses|.
+**Focuses** (8): `methods, results, impact, novelty, clarity, related-work, reproducibility, ethics` — each with description.
+
+**Core focuses (must be covered on every board):** `methods, results, novelty`, set in `config/default.yaml` under `reviewers.core_focuses`. Sampler guarantees each core focus is assigned as some reviewer's primary focus when N ≥ |core_focuses|. Names listed here must exist in `axes.focuses`; `load_config` validates this.
 
 Specialty is NOT an axis vocabulary — it is derived per run from the ACM classes produced by Unit 1.
 
-All three lists are extensible without code changes. Sampler operates on whatever values are in the config.
+The vocabularies are extensible without code changes — add an entry with name+description and the sampler picks it up. Sampler operates on `axis.name`; the `description` is consumed only by the prompt builder.
 
 ## 6. Configuration (`config/default.yaml`)
 
@@ -410,7 +406,6 @@ This layout lets two developers work on different agents in parallel with no fil
 
 Open:
 
-- **EDAS rubric capture.** Form identified as EuCNC & 6G Summit EDAS reviewer form. Verbatim 1–5 descriptor labels (13 of 25 cells) not publicly indexed — locked behind authenticated EDAS. Need a TPC-access screenshot or saved review HTML to fill the table. Tracked as a follow-up task in the implementation plan; until done, the agent emits `null` for unknown-cell labels.
 - **Sample papers — concrete picks.** 3 papers in this field with publicly published ACM CCS classifications. User will source titles + DOIs and prepare them through the ingestion tool.
 - **`pymupdf4llm` table fidelity on the chosen samples.** v1 uses it as default; if extracted markdown loses critical tables on any of the 3 samples, swap-in `marker` becomes a follow-up.
 
@@ -422,7 +417,7 @@ Prior items (resolved):
 - Manuscript ingestion — PDF→markdown handled offline via `scripts/pdf_to_markdown.py` (default backend `pymupdf4llm`). See §4.6.
 - Reviewer relatability — Profile Creation sampler picks a unique Finnish given name per reviewer from `data/finnish_names.json`; name surfaces in persona prompt and rendered review header. See §4.2, §4.4, §4.7.
 - Keyword extraction — embedded in the Classification agent loop; logged but not propagated downstream. `ClassificationResult` contract unchanged. See §4.1.
-- Reviewer output schema — mirrors `review-template.txt` (5 numeric ratings + 3 free-text aspects as single strings); `section_comments` dropped in v1.
+- Reviewer output schema — three free-text aspects only (`strong_aspects`, `weak_aspects`, `recommended_changes`). Numeric ratings dropped; rubric language from `review-template.txt` and `review-template2.txt` absorbed into focus-axis descriptions on the prompt side. See [merged review template delta](2026-04-27-merged-review-template-design.md). `section_comments` dropped earlier in v1.
 - Implementation phasing — Judge harness and cost / token-usage reporting are the LAST features built. Earlier tasks may include thin logging hooks but not aggregation. See §15.
 
 ## 15. Implementation phasing
@@ -445,6 +440,7 @@ After Wave 1 the system produces a final report end-to-end on a real manuscript.
 
 1. **Judge harness** (LLM-as-judge, separate from the runtime pipeline). Built test-first against fixture reviews per §9.
 2. **Cost / token-usage reporting.** During Wave 1 the LLM client logs raw `usage` blocks per call to JSONL (cheap, no aggregation). Aggregation, per-run totals, USD cost reporting, and any cost-aware behaviour (§10) all land here.
-3. **Rubric capture follow-up.** Recover the verbatim EDAS reviewer-form 1–5 descriptor labels from authenticated EDAS access; backfill `data/edas_rubric.json` and update the Reviewer prompt to draw labels from it instead of generating ad-hoc.
 
 Rationale: Waves 1 and 2 are decoupled — the judge has no upstream dependency on the runtime pipeline beyond reading its outputs, and cost reporting is a layer over already-logged data. Pushing both to the end keeps Wave 1 minimal and lets the user see end-to-end behaviour before paying for evaluation infrastructure.
+
+(Previously a third Wave 2 task, "EDAS rubric capture," tracked recovering verbatim 1–5 descriptor labels from authenticated EDAS. It is removed: the reviewer no longer emits numeric ratings, so there is no rubric to capture.)

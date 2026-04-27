@@ -18,9 +18,9 @@ Per spec §15, the build is split into two waves so the system reaches end-to-en
 
 **Wave 1 — core pipeline (Tasks 1 → 13, 15, 16).** Scaffolding, config, contracts, LLM client, offline prep (ACM CCS, Finnish names, PDF→markdown), Classification (with keyword-extraction phase), Profile Creation (sampler with Finnish-name pick + LLM persona step), Reviewer (template-aligned schema), Renderer, Orchestrator, CLI, live acceptance test, README. End of Wave 1: `python -m paperfb <manuscript.md>` produces a final report on a real manuscript.
 
-**Wave 2 — evaluation & accounting (Tasks 14, 14b, 14c). Built LAST.** Judge harness, cost / token-usage reporting aggregation, EDAS rubric capture follow-up. **Earlier tasks may include only thin logging hooks** (LLM client logs raw `usage` blocks per call) — no aggregation, no cost dashboards, no rubric file.
+**Wave 2 — evaluation & accounting (Tasks 14, 14b). Built LAST.** Judge harness, cost / token-usage reporting aggregation. **Earlier tasks may include only thin logging hooks** (LLM client logs raw `usage` blocks per call) — no aggregation, no cost dashboards. (Task 14c "EDAS rubric capture" was removed by the [2026-04-27 merged review template delta](../specs/2026-04-27-merged-review-template-design.md): no numeric ratings → no rubric to capture.)
 
-Task numbering is preserved from v1 of this plan; new tasks slot in as `4a`, `4b`, `14b`, `14c`. The "Track A / Track B" two-developer split below also defers Wave 2 work to the end.
+Task numbering is preserved from v1 of this plan; new tasks slot in as `4a`, `4b`, `14b`. (Task `14c`, EDAS rubric capture, was removed by the 2026-04-27 review-template merge — see `docs/superpowers/specs/2026-04-27-merged-review-template-design.md`.) The "Track A / Track B" two-developer split below also defers Wave 2 work to the end.
 
 ## Parallelization and decoupling
 
@@ -42,7 +42,7 @@ The modules sit in three phases, gated by data dependencies:
 | **0. Foundation** | Foundation | 1, 2, 2b, 3 | pair (or one dev solo) | Scaffolding, config, contracts, LLM client. Must finish before any Phase-1 module can claim "done." Sub-tasks 4a/4b/7 can technically start in parallel with Task 3 since they don't use the LLM client. |
 | **1. Independent modules** (parallelizable) | M1 Classification | 4, 5, 6 | Dev A | ACM CCS data prep → `lookup_acm` tool → Classification agent (with keyword-extraction phase). Public API: `classify(manuscript, cfg, llm) -> ClassificationResult`. |
 | | M2 Profile Creation | 4a, 7, 8 | Dev B | Finnish names data prep → deterministic Sampler (with name picker) → LLM persona step. Public API: `create_profiles(classes, cfg, llm) -> list[ReviewerProfile]`. |
-| | M3 Reviewer | 9, 10 | Dev A (after M1) | `write_review` tool → Reviewer agent (EDAS-aligned schema). Public API: `review(profile, manuscript, cfg, llm) -> Path`. |
+| | M3 Reviewer | 9, 10 | Dev A (after M1) | `write_review` tool → Reviewer agent (3 free-text aspects only — see 2026-04-27 review-template merge). Public API: `review(profile, manuscript, cfg, llm) -> Path`. |
 | | M4 Manuscript Ingestion | 4b | Dev B (slot anywhere) | Standalone PDF→markdown tool. No agent dependency. Small — fills idle time between M2 and M5 for Dev B. |
 | | M5 Renderer | 11 | Dev B (after M3 schema is stable) | Pure code, no LLM. Depends only on the Review JSON schema (frozen in `contracts.py` + a fixture from M3). Can be drafted against the schema and finalised once M3 commits. |
 | **2. Integration** | I1 Orchestrator + CLI | 12, 13 | whichever dev finishes Phase 1 first | Wires the three agent public APIs + Renderer. |
@@ -54,7 +54,6 @@ After Wave 1 ships end-to-end, **Wave 2** modules — also independent — can b
 |-------|--------|-------|-------|-------|
 | **3. Wave 2** | W1 Judge | 14 | either dev | TDD against fixture reviews. No runtime dependency. |
 | | W2 Cost reporting | 14b | either dev | Aggregation layer over already-logged JSONL. |
-| | W3 EDAS rubric capture | 14c | whoever has TPC access | Backfill `data/edas_rubric.json` and tighten Reviewer prompts. |
 
 **Why this assignment:**
 
@@ -92,7 +91,7 @@ After Wave 1 ships end-to-end, **Wave 2** modules — also independent — can b
                 === Wave 1 ships ===
                      │
                      ▼
-            W1 Judge → W2 Cost → W3 Rubric (Wave 2, any order)
+            W1 Judge → W2 Cost (Wave 2, any order)
 ```
 
 ---
@@ -113,13 +112,13 @@ Files created, grouped by task:
 - **Task 7:** `paperfb/agents/profile_creation/sampler.py`, `tests/agents/profile_creation/test_sampler.py` — sampler now also picks unique Finnish given names per Board (loads `data/finnish_names.json`)
 - **Task 8:** `paperfb/agents/profile_creation/{__init__.py, agent.py, prompts.py}`, `tests/agents/profile_creation/test_agent.py` — persona prompt addresses the reviewer by their Finnish given name
 - **Task 9:** `paperfb/agents/reviewer/tools.py`, `tests/agents/reviewer/test_tools.py`
-- **Task 10:** `paperfb/agents/reviewer/{__init__.py, agent.py, prompts.py}`, `tests/agents/reviewer/test_agent.py` — review JSON schema mirrors `review-template.txt` (5 ratings + 3 free-text aspects); `section_comments` removed
-- **Task 11:** `paperfb/renderer.py`, `tests/test_renderer.py` — per-reviewer header includes Finnish name; ratings rendered as a 5-row table
+- **Task 10:** `paperfb/agents/reviewer/{__init__.py, agent.py, prompts.py}`, `tests/agents/reviewer/test_agent.py` — review JSON schema = three free-text aspects only (`strong_aspects`, `weak_aspects`, `recommended_changes`); persona prompt instructs reviewer to ground all three in primary focus (implicit focus angle); see 2026-04-27 review-template merge
+- **Task 11:** `paperfb/renderer.py`, `tests/test_renderer.py` — per-reviewer header includes Finnish name; three free-text aspects rendered as labeled prose subsections (no ratings table)
 - **Task 12:** `paperfb/orchestrator.py`, `tests/test_orchestrator.py`
 - **Task 13:** `paperfb/main.py`, `tests/test_main.py`
 - **Task 14 (Wave 2, last):** `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/{good_review.json, bad_review.json, tiny_manuscript_for_judge.md}`
 - **Task 14b (Wave 2, last, new):** cost / token-usage aggregation in `paperfb/logging.py` + `paperfb/main.py` end-of-run summary; `tests/test_cost_reporting.py`
-- **Task 14c (Wave 2, last, new):** `data/edas_rubric.json` (verbatim 1–5 descriptor labels per Rating Dimension, captured from authenticated EDAS) + reviewer-prompt update to draw labels from it
+- **Task 14c:** *Removed* by 2026-04-27 review-template merge (no numeric ratings ⇒ no rubric to capture).
 - **Task 15:** `tests/test_acceptance_live.py`, `tests/fixtures/tiny_manuscript.md`
 - **Task 16:** `README.md`
 
@@ -251,25 +250,28 @@ paths:
 
 - [ ] **Step 5: Create `config/axes.yaml`**
 
+Each entry is `{name, description}`. The description is a 1–2-sentence prompt-fragment Profile Creation splices into the persona prompt; rubric language from both review templates lives only here. See `docs/superpowers/specs/2026-04-27-merged-review-template-design.md` §3.
+
 ```yaml
 stances:
-  - neutral
-  - supportive
-  - critical
-  - skeptical
-  - rigorous
-  - pragmatic
-  - devil's-advocate
-  - visionary
+  - {name: neutral,          description: "Balanced; weighs strengths and weaknesses without prior tilt."}
+  - {name: supportive,       description: "Constructive; emphasises what works and how to extend it."}
+  - {name: critical,         description: "Probing; surfaces problems the authors may have downplayed."}
+  - {name: skeptical,        description: "Treats every claim as unproven until the evidence forces belief."}
+  - {name: rigorous,         description: "Holds the work to formal correctness, statistical and methodological standards."}
+  - {name: pragmatic,        description: "Asks whether results matter in practice, not just in theory."}
+  - {name: devil's-advocate, description: "Argues the opposite of whatever the paper claims, to stress-test it."}
+  - {name: visionary,        description: "Reads for long-horizon impact and what this work makes possible next."}
+
 focuses:
-  - methods
-  - results
-  - impact
-  - novelty
-  - clarity
-  - related-work
-  - reproducibility
-  - ethics
+  - {name: methods,         description: "Technical content and scientific rigour: completeness of analysis, soundness of models, validity of methodology. (Content / Technical Content & Rigour)"}
+  - {name: results,         description: "Whether reported results actually support the claims; effect sizes, baselines, statistical strength. (Technical Content & Rigour)"}
+  - {name: novelty,         description: "Originality: novel ideas vs incremental variations on a well-investigated subject. (Originality / Novelty & Originality)"}
+  - {name: clarity,         description: "Quality of presentation: organisation, English, figures, references — does the paper communicate its message? (Clarity / Quality of Presentation)"}
+  - {name: impact,          description: "Relevance and timeliness within the paper's research area; potential to influence the field."}
+  - {name: related-work,    description: "Coverage and accuracy of references; positioning relative to existing literature."}
+  - {name: reproducibility, description: "Whether a reader could rebuild the experiment from what is reported."}
+  - {name: ethics,          description: "Ethical implications of methodology, dataset use, deployment, dual-use risks."}
 ```
 
 - [ ] **Step 6: Install deps and verify**
@@ -304,7 +306,7 @@ Create `tests/test_config.py`:
 ```python
 from pathlib import Path
 import pytest
-from paperfb.config import load_config, Config
+from paperfb.config import load_config, Config, AxisItem
 
 
 def test_load_defaults():
@@ -313,8 +315,19 @@ def test_load_defaults():
     assert cfg.reviewers.count == 3
     assert cfg.reviewers.core_focuses == ["methods", "results", "novelty"]
     assert cfg.models.default == "anthropic/claude-3.5-haiku"
-    assert "neutral" in cfg.axes.stances
-    assert "methods" in cfg.axes.focuses
+    stance_names = [s.name for s in cfg.axes.stances]
+    focus_names = [f.name for f in cfg.axes.focuses]
+    assert "neutral" in stance_names
+    assert "methods" in focus_names
+
+
+def test_axis_items_carry_descriptions():
+    cfg = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
+    methods = next(f for f in cfg.axes.focuses if f.name == "methods")
+    assert isinstance(methods, AxisItem)
+    assert methods.description  # non-empty
+    critical = next(s for s in cfg.axes.stances if s.name == "critical")
+    assert critical.description
 
 
 def test_reviewer_count_minimum(tmp_path):
@@ -332,10 +345,26 @@ paths: {acm_ccs: a, reviews_dir: r, output: o, logs_dir: l}
 
 
 def test_core_focuses_must_be_subset_of_focuses():
-    # covered implicitly by validation — extend if needed
     cfg = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
+    focus_names = {f.name for f in cfg.axes.focuses}
     for f in cfg.reviewers.core_focuses:
-        assert f in cfg.axes.focuses
+        assert f in focus_names
+
+
+def test_axis_entry_must_have_name_and_description(tmp_path):
+    bad_axes = tmp_path / "axes.yaml"
+    bad_axes.write_text("stances:\n  - neutral\nfocuses:\n  - methods\n")
+    default = tmp_path / "default.yaml"
+    default.write_text("""
+transport: openai_chat_completions
+base_url_env: BASE_URL
+models: {default: x, classification: x, profile_creation: x, reviewer: x, judge: x}
+reviewers: {count: 3, core_focuses: [methods], secondary_focus_per_reviewer: true, diversity: strict, seed: null}
+classification: {max_classes: 5}
+paths: {acm_ccs: a, reviews_dir: r, output: o, logs_dir: l}
+""")
+    with pytest.raises(ValueError, match="must be \\{name, description\\}"):
+        load_config(default, bad_axes)
 ```
 
 - [ ] **Step 2: Run to verify fail**
@@ -384,9 +413,15 @@ class PathsConfig:
 
 
 @dataclass(frozen=True)
+class AxisItem:
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
 class AxesConfig:
-    stances: list[str]
-    focuses: list[str]
+    stances: list[AxisItem]
+    focuses: list[AxisItem]
 
 
 @dataclass(frozen=True)
@@ -400,6 +435,17 @@ class Config:
     axes: AxesConfig
 
 
+def _parse_axis_items(raw: list, axis_name: str) -> list[AxisItem]:
+    items: list[AxisItem] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or "name" not in entry or "description" not in entry:
+            raise ValueError(
+                f"axes.{axis_name} entries must be {{name, description}} dicts; got {entry!r}"
+            )
+        items.append(AxisItem(name=entry["name"], description=entry["description"]))
+    return items
+
+
 def load_config(default_path: Path, axes_path: Path) -> Config:
     with default_path.open() as f:
         d = yaml.safe_load(f)
@@ -410,10 +456,14 @@ def load_config(default_path: Path, axes_path: Path) -> Config:
     if reviewers_count < 3:
         raise ValueError("reviewers.count must be >= 3")
 
-    axes = AxesConfig(stances=a["stances"], focuses=a["focuses"])
+    axes = AxesConfig(
+        stances=_parse_axis_items(a["stances"], "stances"),
+        focuses=_parse_axis_items(a["focuses"], "focuses"),
+    )
+    focus_names = {f.name for f in axes.focuses}
     core = d["reviewers"]["core_focuses"]
     for f in core:
-        if f not in axes.focuses:
+        if f not in focus_names:
             raise ValueError(f"core focus '{f}' not in axes.focuses")
 
     return Config(
@@ -482,8 +532,8 @@ def test_classification_result_holds_list():
 
 
 def test_review_required_fields_declared():
-    for f in ["reviewer_id", "stance", "focus", "strengths", "weaknesses",
-              "suggestions", "section_comments", "overall_assessment"]:
+    for f in ["reviewer_id", "reviewer_name", "stance", "primary_focus",
+              "strong_aspects", "weak_aspects", "recommended_changes"]:
         assert f in REVIEW_REQUIRED_FIELDS
 ```
 
@@ -538,15 +588,16 @@ class ClassificationResult:
 
 REVIEW_REQUIRED_FIELDS = [
     "reviewer_id",
+    "reviewer_name",
     "stance",
-    "focus",
-    "strengths",
-    "weaknesses",
-    "suggestions",
-    "section_comments",
-    "overall_assessment",
+    "primary_focus",
+    "strong_aspects",
+    "weak_aspects",
+    "recommended_changes",
 ]
 ```
+
+> **Schema rationale (2026-04-27 review-template merge):** Reviewer JSON carries three free-text aspects only. Numeric ratings from both `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` are deliberately dropped — LLM-generated 1–5 scores were judged low-signal as researcher feedback. The rubric language survives only as prompt-side scaffolding via `axes.focuses[*].description` (see Task 1's `config/axes.yaml` and Task 8's persona prompt). See `docs/superpowers/specs/2026-04-27-merged-review-template-design.md` for the full delta.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -1678,6 +1729,21 @@ import json
 from unittest.mock import MagicMock
 from paperfb.agents.profile_creation import create_profiles, ReviewerProfile
 from paperfb.agents.profile_creation.sampler import ReviewerTuple
+from paperfb.config import AxesConfig, AxisItem
+
+
+def _axes() -> AxesConfig:
+    return AxesConfig(
+        stances=[
+            AxisItem("critical",   "Probing; surfaces problems the authors may have downplayed."),
+            AxisItem("supportive", "Constructive; emphasises what works."),
+        ],
+        focuses=[
+            AxisItem("methods", "Technical content and rigour: completeness of analysis, soundness of models."),
+            AxisItem("results", "Whether reported results actually support the claims."),
+            AxisItem("impact",  "Relevance and timeliness within the paper's research area."),
+        ],
+    )
 
 
 def _final(content):
@@ -1701,7 +1767,7 @@ def test_creates_profile_per_tuple():
         _final("You are a supportive DB expert focused on results..."),
     ]
 
-    profiles = create_profiles(tuples, llm=llm, model="stub")
+    profiles = create_profiles(tuples, axes=_axes(), llm=llm, model="stub")
     assert len(profiles) == 2
     assert all(isinstance(p, ReviewerProfile) for p in profiles)
     assert profiles[0].id == "r1"
@@ -1710,6 +1776,21 @@ def test_creates_profile_per_tuple():
     assert profiles[0].stance == "critical"
     assert profiles[0].primary_focus == "methods"
     assert profiles[0].specialty == {"path": "ML", "weight": "High"}
+
+
+def test_persona_prompt_user_message_includes_axis_descriptions():
+    """Per 2026-04-27 review-template merge: stance/focus descriptions must be
+    spliced into the user message so the LLM grounds the persona in rubric language."""
+    tuples = [ReviewerTuple(id="r1", specialty={"path": "ML"},
+                            stance="critical", primary_focus="methods",
+                            secondary_focus="results")]
+    llm = MagicMock()
+    llm.chat.side_effect = [_final("You are ...")]
+    create_profiles(tuples, axes=_axes(), llm=llm, model="stub")
+    user_content = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "Probing; surfaces problems" in user_content        # stance description
+    assert "completeness of analysis" in user_content          # primary_focus description
+    assert "Whether reported results actually support" in user_content  # secondary_focus description
 ```
 
 - [ ] **Step 2: Run to verify fail**
@@ -1721,30 +1802,55 @@ Expected: FAIL (import error).
 
 ```python
 from paperfb.contracts import ReviewerTuple, ReviewerProfile
+from paperfb.config import AxesConfig
 
 PERSONA_SYSTEM = """You generate the system prompt for an AI reviewer persona for a research-paper feedback system.
-Given: specialty (ACM CCS class), stance, primary focus, secondary focus — produce the full system prompt that reviewer will use to review a manuscript.
+Given: specialty (ACM CCS class), stance (with description), primary focus (with description), secondary focus (with description) — produce the full system prompt that reviewer will use to review a manuscript.
 
 Requirements for the system prompt you produce:
 - Second-person voice ("You are ...").
 - Establish the reviewer as a domain specialist grounded in the specialty.
-- Reflect the stance in tone.
-- Emphasise the primary focus; acknowledge the secondary focus as a supplementary lens.
+- Reflect the stance in tone, drawing on the stance description.
+- Emphasise the primary focus, drawing on its description; acknowledge the secondary focus as a supplementary lens.
+- The reviewer's three free-text outputs (strong_aspects, weak_aspects, recommended_changes) must each be grounded in the primary focus, with the secondary focus colouring depth where natural. Do NOT instruct the reviewer to emit numeric ratings.
 - Instruct the reviewer to call the write_review tool with their structured review.
 - Forbid the reviewer from rewriting the paper.
 - No meta-commentary, no preamble — output the system prompt directly.
 """
 
 
-def create_profiles(tuples: list[ReviewerTuple], llm, model: str) -> list[ReviewerProfile]:
+def _lookup(items, name):
+    for it in items:
+        if it.name == name:
+            return it
+    return None
+
+
+def create_profiles(
+    tuples: list[ReviewerTuple],
+    axes: AxesConfig,
+    llm,
+    model: str,
+) -> list[ReviewerProfile]:
     profiles: list[ReviewerProfile] = []
     for t in tuples:
+        stance_item = _lookup(axes.stances, t.stance)
+        primary_item = _lookup(axes.focuses, t.primary_focus)
+        secondary_item = _lookup(axes.focuses, t.secondary_focus) if t.secondary_focus else None
+
+        stance_desc = stance_item.description if stance_item else "(no description)"
+        primary_desc = primary_item.description if primary_item else "(no description)"
+        secondary_line = (
+            f"secondary_focus: {t.secondary_focus} — {secondary_item.description}\n"
+            if secondary_item else "secondary_focus: (none)\n"
+        )
+
         user = (
             f"specialty: {t.specialty['path']}\n"
             f"specialty description: {t.specialty.get('description', '(none)')}\n"
-            f"stance: {t.stance}\n"
-            f"primary_focus: {t.primary_focus}\n"
-            f"secondary_focus: {t.secondary_focus or '(none)'}\n"
+            f"stance: {t.stance} — {stance_desc}\n"
+            f"primary_focus: {t.primary_focus} — {primary_desc}\n"
+            f"{secondary_line}"
         )
         res = llm.chat(
             messages=[
@@ -1809,14 +1915,15 @@ from paperfb.agents.reviewer.tools import write_review, TOOL_SCHEMA, ReviewValid
 def _sample_review(rid="r1"):
     return {
         "reviewer_id": rid,
+        "reviewer_name": "Aino",
+        "specialty": "Computing methodologies → Machine learning",
         "stance": "critical",
-        "focus": "methods",
-        "profile_summary": "...",
-        "strengths": ["clear framing"],
-        "weaknesses": ["small n"],
-        "suggestions": ["add ablations"],
-        "section_comments": [{"section": "3.2", "comment": "..."}],
-        "overall_assessment": "...",
+        "primary_focus": "methods",
+        "secondary_focus": "results",
+        "profile_summary": "critical methods reviewer",
+        "strong_aspects": "Clear framing of the problem and reproducible setup.",
+        "weak_aspects": "N=5 seeds is too few to distinguish the gain from noise.",
+        "recommended_changes": "Increase seeds to >=20 and add a paired statistical test.",
     }
 
 
@@ -1825,12 +1932,13 @@ def test_writes_json_file(tmp_path):
     assert path == tmp_path / "r1.json"
     data = json.loads(path.read_text())
     assert data["reviewer_id"] == "r1"
+    assert data["reviewer_name"] == "Aino"
 
 
 def test_missing_required_field_raises(tmp_path):
     bad = _sample_review()
-    del bad["overall_assessment"]
-    with pytest.raises(ReviewValidationError, match="overall_assessment"):
+    del bad["recommended_changes"]
+    with pytest.raises(ReviewValidationError, match="recommended_changes"):
         write_review(bad, reviews_dir=tmp_path)
 
 
@@ -1843,9 +1951,17 @@ def test_two_reviewers_no_overlap(tmp_path):
 
 def test_tool_schema_lists_required_fields():
     required = TOOL_SCHEMA["function"]["parameters"]["required"]
-    for f in ["reviewer_id", "stance", "focus", "strengths", "weaknesses",
-              "suggestions", "overall_assessment"]:
+    for f in ["reviewer_id", "reviewer_name", "stance", "primary_focus",
+              "strong_aspects", "weak_aspects", "recommended_changes"]:
         assert f in required
+
+
+def test_tool_schema_does_not_include_ratings():
+    """Per 2026-04-27 review-template merge, ratings are no longer in the schema."""
+    props = TOOL_SCHEMA["function"]["parameters"]["properties"]
+    assert "ratings" not in props
+    assert "strengths" not in props
+    assert "section_comments" not in props
 ```
 
 - [ ] **Step 2: Run to verify fail**
@@ -1859,58 +1975,44 @@ Expected: FAIL (import error).
 import json
 from pathlib import Path
 
+from paperfb.contracts import REVIEW_REQUIRED_FIELDS
+
 
 class ReviewValidationError(ValueError):
     pass
-
-
-REQUIRED_FIELDS = [
-    "reviewer_id", "stance", "focus",
-    "strengths", "weaknesses", "suggestions",
-    "section_comments", "overall_assessment",
-]
 
 
 TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "write_review",
-        "description": "Write your structured review to disk. Call exactly once when your review is complete.",
+        "description": (
+            "Write your structured review to disk. Call exactly once when your review is "
+            "complete. Output three free-text aspects (strong_aspects, weak_aspects, "
+            "recommended_changes); do not emit numeric ratings."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
-                "reviewer_id": {"type": "string"},
-                "stance": {"type": "string"},
-                "focus": {"type": "string"},
-                "profile_summary": {"type": "string"},
-                "strengths": {"type": "array", "items": {"type": "string"}},
-                "weaknesses": {"type": "array", "items": {"type": "string"}},
-                "suggestions": {"type": "array", "items": {"type": "string"}},
-                "section_comments": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "section": {"type": "string"},
-                            "comment": {"type": "string"},
-                        },
-                        "required": ["section", "comment"],
-                    },
-                },
-                "overall_assessment": {"type": "string"},
+                "reviewer_id":         {"type": "string"},
+                "reviewer_name":       {"type": "string"},
+                "specialty":           {"type": "string"},
+                "stance":              {"type": "string"},
+                "primary_focus":       {"type": "string"},
+                "secondary_focus":     {"type": ["string", "null"]},
+                "profile_summary":     {"type": "string"},
+                "strong_aspects":      {"type": "string"},
+                "weak_aspects":        {"type": "string"},
+                "recommended_changes": {"type": "string"},
             },
-            "required": [
-                "reviewer_id", "stance", "focus",
-                "strengths", "weaknesses", "suggestions",
-                "section_comments", "overall_assessment",
-            ],
+            "required": list(REVIEW_REQUIRED_FIELDS),
         },
     },
 }
 
 
 def _validate(review: dict) -> None:
-    missing = [f for f in REQUIRED_FIELDS if f not in review]
+    missing = [f for f in REVIEW_REQUIRED_FIELDS if f not in review]
     if missing:
         raise ReviewValidationError(f"review missing fields: {missing}")
 
@@ -1927,7 +2029,7 @@ def write_review(review: dict, reviews_dir: Path) -> Path:
 - [ ] **Step 4: Run to verify pass**
 
 Run: `pytest tests/agents/reviewer/test_tools.py -v`
-Expected: 4 passed.
+Expected: 5 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1976,12 +2078,15 @@ def _res(content=None, tool_calls=None, finish_reason="stop"):
 def _full_review(rid="r1"):
     return {
         "reviewer_id": rid,
+        "reviewer_name": "Aino",
+        "specialty": "ML",
         "stance": "critical",
-        "focus": "methods",
-        "profile_summary": "...",
-        "strengths": ["a"], "weaknesses": ["b"], "suggestions": ["c"],
-        "section_comments": [],
-        "overall_assessment": "...",
+        "primary_focus": "methods",
+        "secondary_focus": "results",
+        "profile_summary": "critical methods reviewer",
+        "strong_aspects": "Reproducible setup, hyperparameters reported.",
+        "weak_aspects": "N=5 too few seeds.",
+        "recommended_changes": "Run with >=20 seeds and add 95% CI.",
     }
 
 
@@ -2063,7 +2168,8 @@ def run_reviewer(profile: ReviewerProfile, manuscript: str, llm, model: str,
             args = json.loads(tc.function.arguments)
             args.setdefault("reviewer_id", profile.id)
             args.setdefault("stance", profile.stance)
-            args.setdefault("focus", profile.primary_focus)
+            args.setdefault("primary_focus", profile.primary_focus)
+            args.setdefault("secondary_focus", profile.secondary_focus)
             try:
                 return write_review(args, reviews_dir=reviews_dir)
             except ReviewValidationError as e:
@@ -2109,34 +2215,53 @@ Create `tests/test_renderer.py`:
 from paperfb.renderer import render_report
 
 
+def _review(rid="r1", name="Aino"):
+    return {
+        "reviewer_id": rid,
+        "reviewer_name": name,
+        "specialty": "Computing methodologies → ML → NN",
+        "stance": "critical",
+        "primary_focus": "methods",
+        "secondary_focus": "results",
+        "profile_summary": "critical methods specialist",
+        "strong_aspects": "Clear framing of the problem and reproducible setup.",
+        "weak_aspects": "Sample size of N=5 cannot distinguish gains from noise.",
+        "recommended_changes": "Run with >=20 seeds, report 95% CIs, add a paired statistical test.",
+    }
+
+
 def test_renders_full_report():
     classes = [
         {"path": "Computing methodologies → ML → NN", "weight": "High", "rationale": "r1"},
     ]
-    reviews = [
-        {
-            "reviewer_id": "r1", "stance": "critical", "focus": "methods",
-            "profile_summary": "a critical methods specialist",
-            "strengths": ["clear framing"],
-            "weaknesses": ["small n"],
-            "suggestions": ["add ablations"],
-            "section_comments": [{"section": "3.2", "comment": "inconsistency"}],
-            "overall_assessment": "needs work",
-        }
-    ]
-    skipped = []
-    md = render_report(classes=classes, reviews=reviews, skipped_reviewers=skipped)
+    reviews = [_review()]
+    md = render_report(classes=classes, reviews=reviews, skipped_reviewers=[])
 
     assert "# Manuscript feedback report" in md
     assert "## ACM classification" in md
     assert "Computing methodologies → ML → NN" in md
     assert "High" in md
-    assert "## Reviewer r1" in md
-    assert "Stance: critical" in md
-    assert "Focus: methods" in md
-    assert "clear framing" in md
-    assert "add ablations" in md
-    assert "3.2" in md
+    # Per-reviewer header includes Finnish name and specialty
+    assert "## Review by Aino" in md
+    assert "Computing methodologies → ML → NN" in md
+    # Profile blurb
+    assert "critical" in md
+    assert "methods" in md
+    # Three labeled prose sections
+    assert "### Strong aspects" in md
+    assert "Clear framing" in md
+    assert "### Weak aspects" in md
+    assert "Sample size of N=5" in md
+    assert "### Recommended changes" in md
+    assert ">=20 seeds" in md
+
+
+def test_no_ratings_table_in_report():
+    """Per 2026-04-27 review-template merge, ratings are not part of the schema or output."""
+    md = render_report(classes=[], reviews=[_review()], skipped_reviewers=[])
+    # No table header, no /5 score formatting
+    assert "| Score" not in md
+    assert "/5" not in md
 
 
 def test_notes_skipped_reviewers():
@@ -2160,15 +2285,12 @@ Expected: FAIL (import error).
 
 - [ ] **Step 3: Implement `paperfb/renderer.py`**
 
+Per 2026-04-27 review-template merge: render the three free-text aspects as labeled prose subsections. No ratings table.
+
 ```python
-from typing import Iterable
-
-
-def _bullet_list(items: Iterable[str]) -> str:
-    items = list(items)
-    if not items:
-        return "_(none)_\n"
-    return "\n".join(f"- {x}" for x in items) + "\n"
+def _prose_or_placeholder(text) -> str:
+    text = (text or "").strip()
+    return text if text else "_(none)_"
 
 
 def render_report(classes: list[dict], reviews: list[dict],
@@ -2191,27 +2313,35 @@ def render_report(classes: list[dict], reviews: list[dict],
         return "\n".join(lines) + "\n"
 
     for r in reviews:
-        lines.append(f"## Reviewer {r['reviewer_id']}")
+        name = r.get("reviewer_name") or r.get("reviewer_id", "")
+        specialty = r.get("specialty", "")
+        header = f"## Review by {name}"
+        if specialty:
+            header += f" — {specialty}"
+        lines.append(header)
         lines.append("")
-        lines.append(f"- Stance: {r['stance']}")
-        lines.append(f"- Focus: {r['focus']}")
+        blurb_parts = [f"Stance: **{r.get('stance', '')}**",
+                       f"primary focus: **{r.get('primary_focus', '')}**"]
+        sec = r.get("secondary_focus")
+        if sec:
+            blurb_parts.append(f"secondary focus: **{sec}**")
+        lines.append(", ".join(blurb_parts))
         if r.get("profile_summary"):
-            lines.append(f"- Profile: {r['profile_summary']}")
-        lines.append("")
-        lines.append("### Strengths")
-        lines.append(_bullet_list(r.get("strengths", [])))
-        lines.append("### Weaknesses")
-        lines.append(_bullet_list(r.get("weaknesses", [])))
-        lines.append("### Suggestions")
-        lines.append(_bullet_list(r.get("suggestions", [])))
-        sc = r.get("section_comments", [])
-        if sc:
-            lines.append("### Section comments")
-            for item in sc:
-                lines.append(f"- **{item['section']}** — {item['comment']}")
             lines.append("")
-        lines.append("### Overall assessment")
-        lines.append(r.get("overall_assessment", "") + "\n")
+            lines.append(f"_{r['profile_summary']}_")
+        lines.append("")
+        lines.append("### Strong aspects")
+        lines.append("")
+        lines.append(_prose_or_placeholder(r.get("strong_aspects")))
+        lines.append("")
+        lines.append("### Weak aspects")
+        lines.append("")
+        lines.append(_prose_or_placeholder(r.get("weak_aspects")))
+        lines.append("")
+        lines.append("### Recommended changes")
+        lines.append("")
+        lines.append(_prose_or_placeholder(r.get("recommended_changes")))
+        lines.append("")
 
     if skipped_reviewers:
         lines.append("## Skipped reviewers")
@@ -2225,7 +2355,7 @@ def render_report(classes: list[dict], reviews: list[dict],
 - [ ] **Step 4: Run to verify pass**
 
 Run: `pytest tests/test_renderer.py -v`
-Expected: 3 passed.
+Expected: 4 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -2296,9 +2426,16 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         p = Path(reviews_dir) / f"{profile.id}.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps({
-            "reviewer_id": profile.id, "stance": profile.stance, "focus": profile.primary_focus,
-            "profile_summary": "", "strengths": ["s"], "weaknesses": ["w"],
-            "suggestions": ["x"], "section_comments": [], "overall_assessment": "ok",
+            "reviewer_id": profile.id,
+            "reviewer_name": "Aino",
+            "specialty": profile.specialty.get("path", ""),
+            "stance": profile.stance,
+            "primary_focus": profile.primary_focus,
+            "secondary_focus": profile.secondary_focus,
+            "profile_summary": "",
+            "strong_aspects": "good framing",
+            "weak_aspects": "small N",
+            "recommended_changes": "more seeds",
         }))
         return p
 
@@ -2310,7 +2447,7 @@ def test_full_pipeline_happy_path(cfg, tmp_path):
         classify_fn=lambda manuscript, llm, model, ccs_path, max_classes:
             MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
         sample_fn=lambda **kwargs: tuples,
-        profile_fn=lambda tuples, llm, model: profiles,
+        profile_fn=lambda tuples, axes, llm, model: profiles,
         reviewer_fn=fake_reviewer,
     ))
 
@@ -2337,9 +2474,16 @@ def test_reviewer_failure_is_skipped(cfg, tmp_path):
         p = Path(reviews_dir) / f"{profile.id}.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps({
-            "reviewer_id": profile.id, "stance": "critical", "focus": profile.primary_focus,
-            "profile_summary": "", "strengths": [], "weaknesses": [], "suggestions": [],
-            "section_comments": [], "overall_assessment": "ok",
+            "reviewer_id": profile.id,
+            "reviewer_name": "Eero",
+            "specialty": profile.specialty.get("path", ""),
+            "stance": "critical",
+            "primary_focus": profile.primary_focus,
+            "secondary_focus": profile.secondary_focus,
+            "profile_summary": "",
+            "strong_aspects": "",
+            "weak_aspects": "",
+            "recommended_changes": "",
         }))
         return p
 
@@ -2347,7 +2491,7 @@ def test_reviewer_failure_is_skipped(cfg, tmp_path):
         manuscript="hello", cfg=cfg, llm=MagicMock(),
         classify_fn=lambda **kw: MagicMock(classes=[{"path": "ML", "weight": "High", "rationale": "r"}]),
         sample_fn=lambda **kw: tuples,
-        profile_fn=lambda tuples, llm, model: profiles,
+        profile_fn=lambda tuples, axes, llm, model: profiles,
         reviewer_fn=flaky_reviewer,
     ))
     assert len(result.reviews) == 2
@@ -2410,18 +2554,20 @@ async def run_pipeline(
     classes = classification.classes if isinstance(classification, ClassificationResult) else classification.classes
 
     # 2. Sample reviewer tuples deterministically
+    # Sampler operates on names; descriptions are consumed by Profile Creation only.
     tuples = sample_fn(
         n=cfg.reviewers.count,
         acm_classes=classes,
-        stances=cfg.axes.stances,
-        focuses=cfg.axes.focuses,
+        stances=[s.name for s in cfg.axes.stances],
+        focuses=[f.name for f in cfg.axes.focuses],
         core_focuses=cfg.reviewers.core_focuses,
         seed=cfg.reviewers.seed,
         enable_secondary=cfg.reviewers.secondary_focus_per_reviewer,
     )
 
-    # 3. Generate personas
-    profiles = profile_fn(tuples, llm=llm, model=cfg.models.profile_creation)
+    # 3. Generate personas — passes the full AxesConfig so the persona prompt can
+    # splice in stance/focus descriptions verbatim (per 2026-04-27 review-template merge §3).
+    profiles = profile_fn(tuples, axes=cfg.axes, llm=llm, model=cfg.models.profile_creation)
 
     # 4. Fan out reviewers
     reviews_dir = Path(cfg.paths.reviews_dir)
@@ -2616,37 +2762,32 @@ Mean return 210.1 vs baseline 205.4. No statistical test performed.
 ```json
 {
   "reviewer_id": "r1",
+  "reviewer_name": "Aino",
+  "specialty": "Computing methodologies → Machine learning → Reinforcement learning",
   "stance": "critical",
-  "focus": "methods",
+  "primary_focus": "methods",
+  "secondary_focus": "results",
   "profile_summary": "critical methods reviewer",
-  "strengths": ["Reproducible setup with explicit hyperparameters (LR=1e-4)."],
-  "weaknesses": [
-    "N=5 seeds is too few to distinguish the +2.3% gain from noise.",
-    "No statistical test (e.g. Welch's t-test) is reported for the return difference."
-  ],
-  "suggestions": [
-    "Increase seeds to at least 20 and report 95% confidence intervals.",
-    "Add a paired statistical test comparing RLAgent-X and baseline per seed."
-  ],
-  "section_comments": [
-    {"section": "Results", "comment": "The 2.3% improvement needs a significance test given the small N."}
-  ],
-  "overall_assessment": "The methodology is clear but the empirical claim is underpowered."
+  "strong_aspects": "The setup is reproducible: hyperparameters (LR=1e-4) are reported explicitly and the baseline DQN is standard.",
+  "weak_aspects": "N=5 seeds is too few to distinguish the +2.3% gain from noise, and no statistical test (e.g. Welch's t-test) is reported for the return difference. The Results section reports means without confidence intervals, so the claim is empirically underpowered.",
+  "recommended_changes": "Increase seeds to at least 20 and report 95% confidence intervals. Add a paired statistical test comparing RLAgent-X and the baseline per seed; report the test statistic and p-value alongside the means."
 }
 ```
 
 `tests/fixtures/bad_review.json`:
+
 ```json
 {
   "reviewer_id": "r2",
+  "reviewer_name": "Eero",
+  "specialty": "Computing methodologies",
   "stance": "critical",
-  "focus": "methods",
+  "primary_focus": "methods",
+  "secondary_focus": null,
   "profile_summary": "critical methods reviewer",
-  "strengths": ["The paper is well written."],
-  "weaknesses": ["Some parts could be clearer."],
-  "suggestions": ["Improve the methodology section."],
-  "section_comments": [],
-  "overall_assessment": "Looks fine overall."
+  "strong_aspects": "The paper is well written.",
+  "weak_aspects": "Some parts could be clearer.",
+  "recommended_changes": "Improve the methodology section."
 }
 ```
 
@@ -2781,7 +2922,8 @@ def judge_review(manuscript: str, review: dict, llm, model: str) -> RubricScores
     user = (
         f"Manuscript:\n<MANUSCRIPT>\n{manuscript}\n</MANUSCRIPT>\n\n"
         f"Reviewer stance: {review.get('stance')}\n"
-        f"Reviewer focus: {review.get('focus')}\n\n"
+        f"Reviewer primary_focus: {review.get('primary_focus')}\n"
+        f"Reviewer secondary_focus: {review.get('secondary_focus')}\n\n"
         f"Review JSON:\n{json.dumps(review, indent=2)}"
     )
     res = llm.chat(
@@ -3121,55 +3263,8 @@ git commit -m "Aggregate per-run cost and token usage summary"
 
 ---
 
-## Task 14c: EDAS rubric capture follow-up — Wave 2
+## Task 14c: REMOVED
 
-> **Phasing:** Wave 2. Last task. Unblocks fully-canonical Reviewer output Labels.
+The 2026-04-27 review-template merge dropped numeric ratings from the reviewer schema entirely. With no numeric scores in the output, there is no rubric to capture.
 
-**Files:**
-- Create: `data/edas_rubric.json`
-- Modify: `paperfb/agents/reviewer/prompts.py` (and any test fixtures asserting Label content)
-
-**Goal:** capture the verbatim 1–5 descriptor labels for each Rating Dimension on the EuCNC/6G EDAS reviewer form, and have the Reviewer agent draw labels from that file instead of generating ad-hoc labels.
-
-Per the research log on this plan: the labels are gated behind authenticated EDAS access and not publicly indexed. Two web-research agents searched IEEE / EuCNC / 6G Summit reviewer documentation and surfaced only the dimension names — never the full per-cell labels.
-
-- [ ] **Step 1: Acquire the rubric**
-
-Recover via one of:
-
-- TPC member with active EDAS reviewer access screenshots each dropdown and transcribes the wording verbatim.
-- Saved review HTML page from EDAS (`view-source:` on a populated review form).
-- Direct outreach to EuCNC technical chairs.
-
-- [ ] **Step 2: Encode `data/edas_rubric.json`**
-
-```json
-{
-  "relevance_and_timeliness": {
-    "5": "...",
-    "4": "Good",
-    "3": "...",
-    "2": "Little",
-    "1": "..."
-  },
-  "technical_content_and_rigour":  {"5": "...", "4": "...", "3": "Valid work but limited contribution", "2": "Marginal work and simple contribution. Some flaws", "1": "..."},
-  "novelty_and_originality":       {"5": "...", "4": "Significant original work and novel results", "3": "Some interesting ideas and results on a subject well investigated", "2": "Minor variations on a well investigated subject", "1": "..."},
-  "quality_of_presentation":       {"5": "...", "4": "Well written", "3": "Readable, but revision is needed in some parts", "2": "...", "1": "..."},
-  "overall_recommendation":        {"5": "Strong accept", "4": "...", "3": "Borderline", "2": "...", "1": "Strong reject"}
-}
-```
-
-- [ ] **Step 3: Update Reviewer prompt**
-
-In `paperfb/agents/reviewer/prompts.py`, embed the rubric content (or a reference to load it) so the Reviewer Agent emits the canonical Label string for whichever score it picks. Drop the "fall back to `null` for unknown labels" branch.
-
-- [ ] **Step 4: Tighten tests**
-
-Update `tests/agents/reviewer/test_agent.py` to assert that emitted Labels match the rubric exactly for each dimension, not free-form approximations.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add data/edas_rubric.json paperfb/agents/reviewer/prompts.py tests/agents/reviewer/test_agent.py
-git commit -m "Wire canonical EDAS rubric labels into Reviewer agent"
-```
+See `docs/superpowers/specs/2026-04-27-merged-review-template-design.md` for the full rationale; rubric language from both source templates now lives in `axes.focuses[*].description` on the prompt side only.

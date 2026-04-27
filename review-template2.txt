@@ -1,0 +1,13 @@
+Co = Content:Does it reflect excellence of research work; is the paper technically sound? [5 to 1] 5 = Excellent content; 3 = Solid content; 1 = Very questionable content;
+O = Originality:Provides a novel approach, does the paper discuss new/unpublished work? [5 to 1] 5 = Trailblazing (very innovative); 3 = One step ahead of the pack; 1 = It has been said many times before;
+Cl = Clarity:Does the paper clearly communicate its message? [5 to 1] 5 = Very good; 3 = Readable; 1 = Unacceptably poor;
+R = Relevance:How well does the content fit the conference objectives (in particular the future-looking scope of the conference)? [5 to 1] 5 = Right on target; 3 = Close enough; 1 = Definitely inappropriate;
+Summary of evaluation:Chose from:
+Award quality → (mandatory to explain the reason
+Good
+Fair
+Poor
+Overall recommendation:Chose from:
+Accept with no changes
+Accept with minor revision → (mandatory to provide the needed changes)
+Reject → (mandatory to explain reason)
