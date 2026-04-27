@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:skos="http://www.w3.org/2004/02/skos/core#">
+  <skos:Concept rdf:about="urn:ccs:root">
+    <skos:prefLabel xml:lang="en">Computing methodologies</skos:prefLabel>
+  </skos:Concept>
+  <skos:Concept rdf:about="urn:ccs:ml">
+    <skos:prefLabel xml:lang="en">Machine learning</skos:prefLabel>
+    <skos:broader rdf:resource="urn:ccs:root"/>
+  </skos:Concept>
+  <skos:Concept rdf:about="urn:ccs:nn">
+    <skos:prefLabel xml:lang="en">Neural networks</skos:prefLabel>
+    <skos:broader rdf:resource="urn:ccs:ml"/>
+  </skos:Concept>
+</rdf:RDF>
