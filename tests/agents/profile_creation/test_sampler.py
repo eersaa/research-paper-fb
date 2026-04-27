@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 import pytest
-from paperfb.agents.profile_creation.sampler import sample_reviewer_tuples, ReviewerTuple
+from paperfb.agents.profile_creation.sampler import sample_reviewer_tuples
+from paperfb.contracts import ReviewerTuple
 
 STANCES = ["neutral", "critical", "skeptical", "supportive", "rigorous"]
 FOCUSES = ["methods", "results", "impact", "novelty", "clarity", "reproducibility"]
@@ -61,7 +62,7 @@ def test_seed_reproducibility():
 def test_different_seeds_differ():
     a = sample_reviewer_tuples(3, ACM_CLASSES, STANCES, FOCUSES, CORE, seed=1)
     b = sample_reviewer_tuples(3, ACM_CLASSES, STANCES, FOCUSES, CORE, seed=2)
-    assert a != b or True  # allow collisions, but at minimum it should not always equal
+    assert a != b
 
 
 def test_single_acm_class_all_share_specialty():

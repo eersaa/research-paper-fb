@@ -78,12 +78,13 @@ def sample_reviewer_tuples(
     else:
         secondaries = [None] * n
 
-    # Finnish name assignment
+    # Finnish name assignment — pad with "" when names pool is smaller than n
     names: list[str] = [""] * n
     if names_path is not None:
         all_names = _load_names(names_path)
         picked_names = rng.sample(all_names, k=min(n, len(all_names)))
-        names = picked_names[:n]
+        for i, nm in enumerate(picked_names):
+            names[i] = nm
 
     # Specialty round-robin over sorted classes
     tuples: list[ReviewerTuple] = []
