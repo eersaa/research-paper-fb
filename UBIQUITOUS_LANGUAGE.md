@@ -6,7 +6,7 @@
 | ---------------- | --------------------------------------------------------------------------------- | ------------------------- |
 | **Manuscript**   | The markdown document a researcher submits for feedback; sole content input. PDFs are converted to Manuscripts offline. | Paper, research paper, doc |
 | **Sample Manuscript** | One of the 3 published-with-CCS papers prepared offline under `samples/<paper-id>/manuscript.md`, with its `expected_acm_classes.json` ground truth. Used for evaluation, not for runtime input. | Sample, fixture paper |
-| **Review**       | One reviewer's structured JSON output: ratings, strong / weak aspects, recommended changes. | Feedback, critique        |
+| **Review**       | One reviewer's structured JSON output: three free-text aspects (strong / weak / recommended changes) plus identity fields (reviewer name, stance, primary focus, etc.). No numeric ratings. | Feedback, critique        |
 | **Final Report** | The compiled markdown file aggregating all Reviews for a Run.                     | Output, summary, report   |
 | **Run**          | One end-to-end execution of the pipeline on a single Manuscript.                  | Job, invocation           |
 
@@ -26,6 +26,7 @@
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | **Persona**              | A concrete reviewer identity formed from (Reviewer Name + Specialty + Stance + Primary Focus + Secondary Focus); serves as a Reviewer Agent system prompt. | Profile, character        |
 | **Reviewer Name**        | A Finnish given name drawn from the Finnish nameday calendar (`data/finnish_names.json`), assigned to one Persona by the Sampler. Unique per Board; not part of the identity tuple under the Diversity Constraint. Surfaced in the rendered Review header. | Persona name, alias       |
+| **Reviewer ID**          | Internal opaque identifier for one Reviewer on a Board (e.g. `r1`, `r2`); used to correlate ReviewerTuple -> ReviewerProfile -> Review across the pipeline. Not human-facing; never rendered. | Reviewer index, slot      |
 | **Specialty**            | Per-Run reviewer grounding derived from one ACM CCS Class; anchors the reviewer as a domain expert. Not an Axis — drawn fresh each Run. | Background, expertise     |
 | **Stance**               | Identity Axis value governing reviewer attitude (e.g. `critical`, `supportive`, `devil's-advocate`).                   | Attitude, tone            |
 | **Primary Focus**        | Identity Focus Axis value for a Reviewer; subject to the Diversity Constraint.                                         | Focus (unqualified), main focus |
@@ -45,15 +46,14 @@
 | **Weight**               | One of `High`/`Medium`/`Low` — ACM-convention relevance marker on a CCS Class.       | Score, priority           |
 | **Keyword Extraction**   | First phase of the Classification Agent loop: collect candidate ACM-relevant keywords from the Manuscript's explicit `Keywords:` block, or synthesise them from title / abstract / headings. Keywords drive `lookup_acm` queries; they are logged with the Run but NOT included in `ClassificationResult` and never reach Profile Creation or Reviewer prompts. | Tagging, term mining      |
 
-## Review form (output schema)
+## Review schema (output)
 
-| Term                | Definition                                                                                                                       | Aliases to avoid             |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| **Review Form**     | The IEEE-style EuCNC/6G EDAS reviewer form whose layout `review-template.txt` reproduces; canonical shape of the Reviewer JSON. | Review schema, review template |
-| **Rating**          | One numeric 1–5 score on a Review Form Rating Dimension, paired with a descriptor Label.                                        | Grade (reserved for Judge)   |
-| **Rating Dimension**| One of the five Review Form axes: `relevance_and_timeliness`, `technical_content_and_rigour`, `novelty_and_originality`, `quality_of_presentation`, `overall_recommendation`. Distinct from a Rubric Dimension (which the Judge Agent scores). | Rating axis                  |
-| **Label**           | The verbatim descriptor for a given (Rating Dimension, score) cell on the EDAS form (e.g. "Strong accept" for `overall_recommendation` = 5). May be `null` until the full EDAS rubric is captured. | Descriptor                   |
-| **Aspect**          | One of the three free-text Review Form sections: `strong_aspects`, `weak_aspects`, `recommended_changes`. Each is a single string. | Comments, notes              |
+| Term                  | Definition                                                                                                                       | Aliases to avoid             |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| **Review Schema**     | The Reviewer JSON shape produced by `write_review`: identity fields (`reviewer_id`, `reviewer_name`, `specialty`, `stance`, `primary_focus`, `secondary_focus`, `profile_summary`) plus the three Aspect fields. No numeric ratings. Defined by the 2026-04-27 merged-template design. | Review form, review template |
+| **Aspect**            | One of the three free-text Review Schema sections: `strong_aspects`, `weak_aspects`, `recommended_changes`. Each is a single string grounded in the reviewer's Primary Focus, with Secondary Focus colouring the depth implicitly (no separate `focus_commentary` field). | Comments, notes              |
+| **Profile Summary**   | Free-text reviewer self-introduction emitted alongside the three Aspects (`profile_summary` in the JSON); rendered as the per-reviewer header blurb (stance + primary/secondary focus). Not in `REVIEW_REQUIRED_FIELDS`; produced by the Reviewer Agent's persona prompt. | Bio, intro                   |
+| **Rubric Language**   | The dimension wording from `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` — relevance/timeliness, content/rigour, originality, clarity. Lives only as **prompt-side scaffolding** spliced into Focus Axis `description` fields in `config/axes.yaml`; never emitted in the Review JSON. | EDAS dimensions, template fields |
 
 ## Evaluation
 
@@ -122,3 +122,5 @@
 - **"focus" (bare)** — ambiguous now that Focus is split. Always qualify as **Primary Focus** or **Secondary Focus** in code, config keys, and docs. Bare "focus" is acceptable only when referring generically to the Focus Axis vocabulary (`config/axes.yaml`).
 - **"specialty" vs "CCS Class"** — a **Specialty** is a Persona-level concept derived from one **CCS Class**; a **CCS Class** is a taxonomy entry on the Manuscript. Don't treat them as synonyms.
 - **"board" vs "reviewers"** — "the reviewers" often refers collectively to the Board. Fine informally, but use **Board** when emphasizing the N-as-a-set (e.g. Diversity Constraint applies across the Board).
+- **"review form" vs "Review Schema"** — the EuCNC/EDAS form in `review-template.txt` is no longer the canonical output shape. Canonical: **Review Schema** for the JSON the Reviewer emits (three Aspects + identity fields, no ratings); reserve "review form / template" for the historical EDAS source that contributed **Rubric Language** to Focus axis descriptions.
+- **"rating" / "rating dimension"** — removed from the system as of 2026-04-27. The Reviewer no longer emits numeric scores; only the **Judge Agent** produces numeric output (per **Rubric Dimension**). If you see "rating" in older docs, treat it as deleted, not deferred.
