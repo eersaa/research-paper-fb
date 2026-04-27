@@ -10,6 +10,7 @@ data/_ccs_descriptions_cache.json
 data/_ccs_chunks/
 .pytest_cache/
 *.egg-info/
+.worktrees/
 
 proxy-test.py
 settings.local.json
