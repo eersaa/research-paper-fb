@@ -27,9 +27,8 @@ def test_renders_full_report():
     assert "## ACM classification" in md
     assert "Computing methodologies → ML → NN" in md
     assert "High" in md
-    # Per-reviewer header includes Finnish name and specialty
-    assert "## Review by Aino" in md
-    assert "Computing methodologies → ML → NN" in md
+    # Per-reviewer header includes Finnish name and specialty on the same line
+    assert "## Review by Aino — Computing methodologies → ML → NN" in md
     # Profile blurb
     assert "critical" in md
     assert "methods" in md

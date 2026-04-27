@@ -110,7 +110,7 @@ Files created, grouped by task:
 - **Task 9:** `paperfb/agents/reviewer/tools.py`, `tests/agents/reviewer/test_tools.py`
 - **Task 10:** `paperfb/agents/reviewer/{__init__.py, agent.py, prompts.py}`, `tests/agents/reviewer/test_agent.py` — review JSON schema = three free-text aspects only (`strong_aspects`, `weak_aspects`, `recommended_changes`); persona prompt instructs reviewer to ground all three in primary focus (implicit focus angle); see 2026-04-27 review-template merge
 - **Task 11:** `paperfb/renderer.py`, `tests/test_renderer.py` — per-reviewer header includes Finnish name; three free-text aspects rendered as labeled prose subsections (no ratings table)
-- **Task 12:** `paperfb/orchestrator.py`, `tests/test_orchestrator.py`
+- **Task 12:** `paperfb/orchestrator.py`, `tests/test_orchestrator.py`; extends `paperfb/contracts.py` + `tests/test_contracts.py` with `SkippedReviewer` TypedDict (shape of the dict the orchestrator emits for failed reviewers and passes to the renderer)
 - **Task 13:** `paperfb/main.py`, `tests/test_main.py`
 - **Task 14 (Wave 2, last):** `scripts/judge.py`, `tests/test_judge.py`, `tests/fixtures/{good_review.json, bad_review.json, tiny_manuscript_for_judge.md}`
 - **Task 14b (Wave 2, last, new):** cost / token-usage aggregation in `paperfb/logging.py` + `paperfb/main.py` end-of-run summary; `tests/test_cost_reporting.py`
@@ -2167,9 +2167,8 @@ def test_renders_full_report():
     assert "## ACM classification" in md
     assert "Computing methodologies → ML → NN" in md
     assert "High" in md
-    # Per-reviewer header includes Finnish name and specialty
-    assert "## Review by Aino" in md
-    assert "Computing methodologies → ML → NN" in md
+    # Per-reviewer header includes Finnish name and specialty on the same line
+    assert "## Review by Aino — Computing methodologies → ML → NN" in md
     # Profile blurb
     assert "critical" in md
     assert "methods" in md
@@ -2296,6 +2295,38 @@ git commit -m "Add Markdown renderer for final report"
 
 **Files:**
 - Create: `paperfb/orchestrator.py`, `tests/test_orchestrator.py`
+- Modify: `paperfb/contracts.py`, `tests/test_contracts.py` (add `SkippedReviewer`)
+
+The orchestrator emits one dict per failed reviewer that the renderer then surfaces in the report's "Skipped reviewers" section. The shape (`{id, reason}`) was implicit in the M5 Renderer; Task 12 formalises it as a `SkippedReviewer` TypedDict in `contracts.py` so the orchestrator-renderer boundary is explicit.
+
+- [ ] **Step 0: Extend `paperfb/contracts.py` with `SkippedReviewer` (TDD)**
+
+Add to `tests/test_contracts.py`:
+
+```python
+def test_skipped_reviewer_shape():
+    from paperfb.contracts import SkippedReviewer
+    s: SkippedReviewer = {"id": "r2", "reason": "tool failure"}
+    assert s["id"] == "r2"
+    assert s["reason"] == "tool failure"
+```
+
+Run: `pytest tests/test_contracts.py -v` → expect FAIL (ImportError).
+
+Add to `paperfb/contracts.py`:
+
+```python
+from typing import TypedDict
+
+
+class SkippedReviewer(TypedDict):
+    """Orchestrator-built dict for a reviewer whose run raised. Consumed by the
+    renderer's "Skipped reviewers" section."""
+    id: str
+    reason: str
+```
+
+Run: `pytest tests/test_contracts.py -v` → expect pass.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2439,6 +2470,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from paperfb.config import Config
+from paperfb.contracts import SkippedReviewer
 from paperfb.agents.classification import classify_manuscript, ClassificationResult
 from paperfb.agents.profile_creation import create_profiles, sample_reviewer_tuples
 from paperfb.agents.reviewer import run_reviewer
@@ -2505,10 +2537,10 @@ async def run_pipeline(
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     reviews: list[dict] = []
-    skipped: list[dict] = []
+    skipped: list[SkippedReviewer] = []
     for p, r in zip(profiles, results):
         if isinstance(r, Exception):
-            skipped.append({"id": p.id, "reason": f"{type(r).__name__}: {r}"})
+            skipped.append(SkippedReviewer(id=p.id, reason=f"{type(r).__name__}: {r}"))
             continue
         reviews.append(json.loads(Path(r).read_text()))
 
@@ -2529,7 +2561,7 @@ Expected: 2 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add paperfb/orchestrator.py tests/test_orchestrator.py
+git add paperfb/contracts.py tests/test_contracts.py paperfb/orchestrator.py tests/test_orchestrator.py
 git commit -m "Add orchestrator with sequential pipeline and parallel reviewers"
 ```
 
