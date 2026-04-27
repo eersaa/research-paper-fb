@@ -1,14 +1,23 @@
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+_SCRIPT = Path(__file__).parent.parent / "scripts" / "build_finnish_names.py"
 DATA_FILE = Path(__file__).parent.parent / "data" / "finnish_names.json"
+
+# Load MALE_NAMES / FEMALE_NAMES once at import time — no side effects because
+# build_finnish_names.py guards the write call under `if __name__ == "__main__"`.
+_spec = importlib.util.spec_from_file_location("build_finnish_names", _SCRIPT)
+_bfn = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_bfn)
+MALE_NAMES: list[str] = _bfn.MALE_NAMES
+FEMALE_NAMES: list[str] = _bfn.FEMALE_NAMES
 
 
 def _run_script():
-    script = Path(__file__).parent.parent / "scripts" / "build_finnish_names.py"
-    subprocess.check_call([sys.executable, str(script)])
+    subprocess.check_call([sys.executable, str(_SCRIPT)])
 
 
 def test_data_file_exists_after_run():
@@ -36,15 +45,9 @@ def test_entries_clean_and_unique():
 
 def test_gender_balance():
     _run_script()
-    import importlib.util
-    script = Path(__file__).parent.parent / "scripts" / "build_finnish_names.py"
-    spec = importlib.util.spec_from_file_location("bfn", str(script))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert hasattr(mod, "MALE_NAMES") and hasattr(mod, "FEMALE_NAMES")
-    assert len(mod.MALE_NAMES) >= 25
-    assert len(mod.FEMALE_NAMES) >= 25
-    union = set(mod.MALE_NAMES) | set(mod.FEMALE_NAMES)
+    assert len(MALE_NAMES) >= 25
+    assert len(FEMALE_NAMES) >= 25
+    union = set(MALE_NAMES) | set(FEMALE_NAMES)
     committed = set(json.loads(DATA_FILE.read_text(encoding="utf-8")))
     assert union == committed
 
