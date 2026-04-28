@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 
+from paperfb.config import load_config
 from scripts.judge import judge_review, RubricScores, DimensionScore, DIMENSIONS
 
 
@@ -116,9 +117,6 @@ def test_user_message_contains_manuscript_and_review_fields():
     assert REVIEW["primary_focus"] in user_msg
     assert REVIEW["strong_aspects"] in user_msg
     assert REVIEW["secondary_focus"] in user_msg
-
-
-from paperfb.config import load_config
 
 
 def _stub_llm_factory(payload_dict: dict):
