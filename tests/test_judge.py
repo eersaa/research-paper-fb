@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 
@@ -115,3 +116,129 @@ def test_user_message_contains_manuscript_and_review_fields():
     assert REVIEW["primary_focus"] in user_msg
     assert REVIEW["strong_aspects"] in user_msg
     assert REVIEW["secondary_focus"] in user_msg
+
+
+from dataclasses import replace as _replace
+from paperfb.config import load_config
+
+
+def _stub_llm_factory(payload_dict: dict):
+    """Returns a callable matching from_env(default_model=...) that yields a stub LLM."""
+    def _factory(default_model: str):
+        return _llm_returning(payload_dict)
+    return _factory
+
+
+def _write_review(path: Path, reviewer_id: str) -> None:
+    path.write_text(json.dumps({
+        "reviewer_id": reviewer_id,
+        "reviewer_name": "Aino",
+        "specialty": "ML",
+        "stance": "critical",
+        "primary_focus": "methods",
+        "secondary_focus": None,
+        "profile_summary": "",
+        "strong_aspects": "x",
+        "weak_aspects": "y",
+        "recommended_changes": "z",
+    }))
+
+
+def _write_manuscript(tmp_path: Path) -> Path:
+    p = tmp_path / "manuscript.md"
+    p.write_text("Tiny manuscript body.")
+    return p
+
+
+def test_main_writes_per_reviewer_and_board_mean(tmp_path, monkeypatch):
+    from scripts import judge as judge_mod
+
+    reviews_dir = tmp_path / "reviews"
+    reviews_dir.mkdir()
+    _write_review(reviews_dir / "r1.json", "r1")
+    _write_review(reviews_dir / "r2.json", "r2")
+    manuscript = _write_manuscript(tmp_path)
+
+    monkeypatch.setattr(judge_mod, "from_env", _stub_llm_factory(_payload(
+        specificity=5, actionability=5, persona_fidelity=5, coverage=5, non_redundancy=5)))
+
+    out_path = tmp_path / "eval.json"
+    rc = judge_mod.main([
+        "--manuscript", str(manuscript),
+        "--reviews-dir", str(reviews_dir),
+        "--output", str(out_path),
+    ])
+    assert rc == 0
+
+    data = json.loads(out_path.read_text())
+    assert len(data["per_reviewer"]) == 2
+    for entry in data["per_reviewer"]:
+        assert entry["mean"] == pytest.approx(5.0)
+        for dim in DIMENSIONS:
+            assert entry[dim]["score"] == 5
+            assert entry[dim]["justification"] != ""
+    assert data["board_mean"] == pytest.approx(5.0)
+    assert data["judge_model"]  # non-empty
+
+
+def test_main_auto_generates_run_id_when_output_omitted(tmp_path, monkeypatch):
+    from scripts import judge as judge_mod
+
+    reviews_dir = tmp_path / "reviews"
+    reviews_dir.mkdir()
+    _write_review(reviews_dir / "r1.json", "r1")
+    manuscript = _write_manuscript(tmp_path)
+
+    # Resolve config paths against the repo root before we chdir, so main()
+    # can still find them after the cwd flip.
+    cfg_default = Path("config/default.yaml").resolve()
+    cfg_axes = Path("config/axes.yaml").resolve()
+
+    eval_dir = tmp_path / "evaluations"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(judge_mod, "from_env", _stub_llm_factory(_payload()))
+
+    rc = judge_mod.main([
+        "--manuscript", str(manuscript),
+        "--reviews-dir", str(reviews_dir),
+        "--config", str(cfg_default),
+        "--axes", str(cfg_axes),
+    ])
+    assert rc == 0
+
+    written = list(eval_dir.glob("run-*.json"))
+    assert len(written) == 1
+    assert written[0].name.startswith("run-") and written[0].name.endswith(".json")
+
+
+def test_main_uses_cfg_models_judge_when_model_flag_omitted(tmp_path, monkeypatch):
+    from scripts import judge as judge_mod
+
+    cfg = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
+    expected_model = cfg.models.judge
+
+    reviews_dir = tmp_path / "reviews"
+    reviews_dir.mkdir()
+    _write_review(reviews_dir / "r1.json", "r1")
+    manuscript = _write_manuscript(tmp_path)
+
+    seen_models: list[str] = []
+
+    class _RecordingLLM:
+        def chat(self, messages, model=None, **kw):
+            seen_models.append(model)
+            res = MagicMock()
+            res.content = json.dumps(_payload())
+            res.tool_calls = None
+            res.finish_reason = "stop"
+            return res
+
+    monkeypatch.setattr(judge_mod, "from_env", lambda default_model: _RecordingLLM())
+
+    rc = judge_mod.main([
+        "--manuscript", str(manuscript),
+        "--reviews-dir", str(reviews_dir),
+        "--output", str(tmp_path / "eval.json"),
+    ])
+    assert rc == 0
+    assert seen_models == [expected_model]

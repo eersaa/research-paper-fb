@@ -7,8 +7,17 @@ coupling to the orchestrator. Different model from the reviewers
 """
 from __future__ import annotations
 
+import argparse
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from dotenv import load_dotenv
+
+from paperfb.config import load_config
+from paperfb.llm_client import from_env
 
 
 DIMENSIONS = ["specificity", "actionability", "persona_fidelity", "coverage", "non_redundancy"]
@@ -90,3 +99,68 @@ def judge_review(manuscript: str, review: dict, llm, model: str) -> RubricScores
     )
     raw = json.loads(res.content)
     return RubricScores(**{dim: _parse_dimension(raw, dim) for dim in DIMENSIONS})
+
+
+def _run_id() -> str:
+    return "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _scores_to_dict(scores: RubricScores) -> dict:
+    out: dict = {}
+    for dim in DIMENSIONS:
+        out[dim] = asdict(getattr(scores, dim))
+    out["mean"] = scores.mean
+    return out
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    load_dotenv()
+    p = argparse.ArgumentParser(description="LLM-as-judge for reviewer feedback")
+    p.add_argument("--manuscript", required=True,
+                   help="Path to the manuscript markdown file judged against.")
+    p.add_argument("--reviews-dir", default="reviews",
+                   help="Directory containing per-reviewer JSON files (default: reviews/).")
+    p.add_argument("--output", default=None,
+                   help="Output JSON path. Defaults to evaluations/<run-id>.json.")
+    p.add_argument("--config", default="config/default.yaml",
+                   help="Path to config/default.yaml (default: config/default.yaml).")
+    p.add_argument("--axes", default="config/axes.yaml",
+                   help="Path to config/axes.yaml (default: config/axes.yaml).")
+    p.add_argument("--model", default=None,
+                   help="Override cfg.models.judge.")
+    args = p.parse_args(argv)
+
+    cfg = load_config(Path(args.config), Path(args.axes))
+    model = args.model or cfg.models.judge
+
+    manuscript = Path(args.manuscript).read_text()
+    reviews_dir = Path(args.reviews_dir)
+    review_paths = sorted(reviews_dir.glob("*.json"))
+    if not review_paths:
+        print(f"No reviews found in {reviews_dir}/")
+        return 1
+
+    out_path = Path(args.output) if args.output else Path("evaluations") / f"{_run_id()}.json"
+
+    llm = from_env(default_model=model)
+    per_reviewer: list[dict] = []
+    for rp in review_paths:
+        review = json.loads(rp.read_text())
+        scores = judge_review(manuscript, review, llm=llm, model=model)
+        per_reviewer.append({"reviewer_id": review.get("reviewer_id"), **_scores_to_dict(scores)})
+
+    board_mean = sum(e["mean"] for e in per_reviewer) / len(per_reviewer)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps({
+        "manuscript":  args.manuscript,
+        "judge_model": model,
+        "per_reviewer": per_reviewer,
+        "board_mean":  board_mean,
+    }, indent=2, ensure_ascii=False))
+    print(f"Wrote {out_path}  (board_mean={board_mean:.2f})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
