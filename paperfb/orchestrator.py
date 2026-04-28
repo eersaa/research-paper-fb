@@ -55,6 +55,7 @@ async def run_pipeline(
         core_focuses=cfg.reviewers.core_focuses,
         seed=cfg.reviewers.seed,
         enable_secondary=cfg.reviewers.secondary_focus_per_reviewer,
+        names_path=Path(cfg.paths.finnish_names),
     )
 
     # 3. Generate personas — passes the full AxesConfig so the persona prompt can

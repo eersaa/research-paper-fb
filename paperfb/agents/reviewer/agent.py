@@ -37,10 +37,12 @@ def run_reviewer(profile: ReviewerProfile, manuscript: str, llm, model: str,
             if tc.function.name != "write_review":
                 continue
             args = json.loads(tc.function.arguments)
-            args.setdefault("reviewer_id", profile.id)
-            args.setdefault("stance", profile.stance)
-            args.setdefault("primary_focus", profile.primary_focus)
-            args.setdefault("secondary_focus", profile.secondary_focus)
+            args["reviewer_id"] = profile.id
+            args["reviewer_name"] = profile.name
+            args["specialty"] = profile.specialty.get("path", "")
+            args["stance"] = profile.stance
+            args["primary_focus"] = profile.primary_focus
+            args["secondary_focus"] = profile.secondary_focus
             try:
                 return write_review(args, reviews_dir=reviews_dir)
             except ReviewValidationError as e:
