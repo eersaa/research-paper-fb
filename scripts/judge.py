@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -137,7 +138,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     reviews_dir = Path(args.reviews_dir)
     review_paths = sorted(reviews_dir.glob("*.json"))
     if not review_paths:
-        print(f"No reviews found in {reviews_dir}/")
+        print(f"No reviews found in {reviews_dir}/", file=sys.stderr)
         return 1
 
     out_path = Path(args.output) if args.output else Path("evaluations") / f"{_run_id()}.json"
@@ -153,7 +154,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({
-        "manuscript":  args.manuscript,
+        "manuscript":  str(Path(args.manuscript).resolve()),
         "judge_model": model,
         "per_reviewer": per_reviewer,
         "board_mean":  board_mean,

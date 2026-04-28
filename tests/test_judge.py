@@ -118,7 +118,6 @@ def test_user_message_contains_manuscript_and_review_fields():
     assert REVIEW["secondary_focus"] in user_msg
 
 
-from dataclasses import replace as _replace
 from paperfb.config import load_config
 
 
@@ -172,6 +171,7 @@ def test_main_writes_per_reviewer_and_board_mean(tmp_path, monkeypatch):
 
     data = json.loads(out_path.read_text())
     assert len(data["per_reviewer"]) == 2
+    assert {e["reviewer_id"] for e in data["per_reviewer"]} == {"r1", "r2"}
     for entry in data["per_reviewer"]:
         assert entry["mean"] == pytest.approx(5.0)
         for dim in DIMENSIONS:
