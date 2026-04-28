@@ -43,13 +43,20 @@ The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No 
 
 ## Evaluation
 
-_Wave 2 — `scripts/judge.py` is not yet implemented; this section documents the planned interface._
-
 ```bash
-uv run python scripts/judge.py --manuscript samples/paper.md --reviews-dir reviews --output evaluations/run.json
+# After running the pipeline, judge each reviewer's review:
+uv run python scripts/judge.py --manuscript samples/01/manuscript.md
+# → evaluations/run-<UTC-timestamp>.json
+
+# Override defaults:
+uv run python scripts/judge.py \
+    --manuscript samples/01/manuscript.md \
+    --reviews-dir reviews \
+    --output evaluations/myrun.json \
+    --model openai/gpt-4.1-mini
 ```
 
-Scores each reviewer's feedback on a 5-dimension Likert rubric: specificity, actionability, persona-fidelity, coverage, non-redundancy. Uses a different model from reviewers by default to reduce self-preference bias.
+Each reviewer is scored on five 1–5 Likert dimensions: `specificity`, `actionability`, `persona_fidelity`, `coverage`, `non_redundancy`. Each dimension has its own justification. The output JSON also includes a `mean` per reviewer and a `board_mean` across all reviewers. The judge defaults to `cfg.models.judge` (different from the reviewer model) to reduce self-preference bias.
 
 ## Tests
 
