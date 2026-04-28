@@ -106,3 +106,4 @@ def test_user_message_contains_manuscript_and_review_fields():
     assert REVIEW["stance"] in user_msg
     assert REVIEW["primary_focus"] in user_msg
     assert REVIEW["strong_aspects"] in user_msg
+    assert REVIEW["secondary_focus"] in user_msg

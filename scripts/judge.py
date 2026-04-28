@@ -1,25 +1,14 @@
 """LLM-as-judge evaluation harness for reviewer feedback.
 
-Scores each reviewer's review on a 5-dim Likert (1-5) rubric and writes a
-per-run JSON to evaluations/<run-id>.json. Standalone — no runtime coupling
-to the orchestrator. Uses cfg.models.judge (different model from reviewers)
-for bias mitigation per spec §9.
-
-Usage (CLI):
-    uv run python scripts/judge.py --manuscript samples/01/manuscript.md
-    # → evaluations/run-<UTC-timestamp>.json
-
-    uv run python scripts/judge.py --manuscript X --reviews-dir reviews \\
-        --output evaluations/myrun.json --model openai/gpt-4.1-mini
+Scores one reviewer's review on a 5-dim Likert (1-5) rubric using a
+strict-JSON prompt and validates the response. Standalone — no runtime
+coupling to the orchestrator. Different model from the reviewers
+(bias mitigation per spec §9) is enforced by the caller.
 """
 from __future__ import annotations
 
-import argparse
 import json
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional
+from dataclasses import dataclass
 
 
 DIMENSIONS = ["specificity", "actionability", "persona_fidelity", "coverage", "non_redundancy"]
