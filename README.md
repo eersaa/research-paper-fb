@@ -45,12 +45,12 @@ The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No 
 
 ```bash
 # After running the pipeline, judge each reviewer's review:
-uv run python scripts/judge.py --manuscript samples/01/manuscript.md
+uv run python scripts/judge.py --manuscript path/to/manuscript.md
 # → evaluations/run-<UTC-timestamp>.json
 
 # Override defaults:
 uv run python scripts/judge.py \
-    --manuscript samples/01/manuscript.md \
+    --manuscript path/to/manuscript.md \
     --reviews-dir reviews \
     --output evaluations/myrun.json \
     --model openai/gpt-4.1-mini
