@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from paperfb.agents.classification.tools import lookup_acm, load_ccs, TOOL_SCHEMA
+from paperfb.agents.classification.tools import lookup_acm, load_ccs
 
 
 @pytest.fixture
@@ -83,13 +83,134 @@ def test_query_with_regex_metachars_does_not_explode(ccs_path):
     assert results == []
 
 
-def test_tool_schema_has_required_fields():
-    assert TOOL_SCHEMA["type"] == "function"
-    assert TOOL_SCHEMA["function"]["name"] == "lookup_acm"
-    assert "query" in TOOL_SCHEMA["function"]["parameters"]["properties"]
+def test_lookup_schema_has_required_fields():
+    schema = next(
+        s for s in TOOL_SCHEMAS if s["function"]["name"] == "lookup_acm"
+    )
+    assert schema["type"] == "function"
+    assert "query" in schema["function"]["parameters"]["properties"]
 
 
 def test_load_ccs_from_file(ccs_path):
     entries = load_ccs(ccs_path)
     assert len(entries) == 5
     assert entries[0]["path"] == "A → B"
+
+
+# --- submit_classification validator ---
+
+from paperfb.agents.classification.tools import (
+    submit_classification,
+    ClassificationValidationError,
+    TOOL_SCHEMAS,
+)
+from paperfb.contracts import ClassificationResult
+
+
+@pytest.fixture
+def ccs_entries():
+    return (
+        {"path": "Computing methodologies → Machine learning", "leaf": False,
+         "description": "ML overview."},
+        {"path": "Computing methodologies → Machine learning → Neural networks",
+         "leaf": True, "description": "Deep learning, CNNs, RNNs."},
+    )
+
+
+def _valid_args(path="Computing methodologies → Machine learning → Neural networks"):
+    return {
+        "keywords": {
+            "extracted_from_paper": ["neural network"],
+            "synthesised": [],
+        },
+        "classes": [
+            {"path": path, "weight": "High", "rationale": "primary topic"},
+        ],
+    }
+
+
+def test_submit_returns_classification_result(ccs_entries):
+    r = submit_classification(_valid_args(), ccs_entries=ccs_entries, max_classes=5)
+    assert isinstance(r, ClassificationResult)
+    assert len(r.classes) == 1
+    assert r.classes[0]["weight"] == "High"
+
+
+def test_submit_rejects_empty_classes(ccs_entries):
+    args = _valid_args()
+    args["classes"] = []
+    with pytest.raises(ClassificationValidationError, match="classes"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+
+
+def test_submit_rejects_too_many_classes(ccs_entries):
+    args = _valid_args()
+    args["classes"] = [
+        {"path": "Computing methodologies → Machine learning → Neural networks",
+         "weight": "High", "rationale": "x"}
+    ] * 3
+    with pytest.raises(ClassificationValidationError, match="max_classes"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=2)
+
+
+def test_submit_rejects_unknown_path(ccs_entries):
+    args = _valid_args(path="Made up → Path")
+    with pytest.raises(ClassificationValidationError, match="path"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+
+
+def test_submit_rejects_bad_weight(ccs_entries):
+    args = _valid_args()
+    args["classes"][0]["weight"] = "Critical"
+    with pytest.raises(ClassificationValidationError, match="weight"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+
+
+def test_submit_rejects_missing_keywords_block(ccs_entries):
+    args = _valid_args()
+    del args["keywords"]
+    with pytest.raises(ClassificationValidationError, match="keywords"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+
+
+def test_submit_rejects_keywords_both_empty(ccs_entries):
+    args = _valid_args()
+    args["keywords"] = {"extracted_from_paper": [], "synthesised": []}
+    with pytest.raises(ClassificationValidationError, match="keywords"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+
+
+def test_submit_accepts_keywords_only_synthesised(ccs_entries):
+    args = _valid_args()
+    args["keywords"] = {"extracted_from_paper": [], "synthesised": ["deep learning"]}
+    r = submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+    assert len(r.classes) == 1
+
+
+def test_submit_rejects_missing_classes_field(ccs_entries):
+    args = _valid_args()
+    del args["classes"]
+    with pytest.raises(ClassificationValidationError, match="classes"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+
+
+def test_submit_rejects_non_dict_class_item(ccs_entries):
+    args = _valid_args()
+    args["classes"] = ["just a string"]
+    with pytest.raises(ClassificationValidationError, match="object"):
+        submit_classification(args, ccs_entries=ccs_entries, max_classes=5)
+
+
+# --- TOOL_SCHEMAS ---
+
+def test_tool_schemas_lists_both_tools():
+    names = {s["function"]["name"] for s in TOOL_SCHEMAS}
+    assert names == {"lookup_acm", "submit_classification"}
+
+
+def test_submit_schema_requires_keywords_and_classes():
+    submit = next(
+        s for s in TOOL_SCHEMAS if s["function"]["name"] == "submit_classification"
+    )
+    required = submit["function"]["parameters"]["required"]
+    assert set(required) == {"keywords", "classes"}

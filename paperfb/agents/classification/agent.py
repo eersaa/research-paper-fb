@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from paperfb.contracts import ClassificationResult
-from paperfb.agents.classification.tools import lookup_acm, TOOL_SCHEMA
+from paperfb.agents.classification.tools import lookup_acm, TOOL_SCHEMAS
 
 SYSTEM_PROMPT = """You classify a computer-science research manuscript against the ACM Computing Classification System (CCS).
 Rules:
@@ -21,7 +21,7 @@ def classify_manuscript(manuscript: str, llm, model: str, ccs_path: Path,
         {"role": "system", "content": SYSTEM_PROMPT.format(max_classes=max_classes)},
         {"role": "user", "content": f"Manuscript:\n\n{manuscript}"},
     ]
-    tools = [TOOL_SCHEMA]
+    tools = TOOL_SCHEMAS
 
     for _ in range(6):  # bound tool loop
         res = llm.chat(messages=messages, tools=tools, model=model)
