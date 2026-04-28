@@ -86,7 +86,15 @@ def test_non_int_score_raises():
     payload = _payload()
     payload["specificity"]["score"] = "five"
     llm = _llm_returning(payload)
-    with pytest.raises(ValueError, match="specificity out of range"):
+    with pytest.raises(ValueError, match="specificity: score must be an integer"):
+        judge_review(MANUSCRIPT, REVIEW, llm=llm, model="stub")
+
+
+def test_bool_score_raises():
+    payload = _payload()
+    payload["specificity"]["score"] = True  # bool is a subclass of int — must still be rejected
+    llm = _llm_returning(payload)
+    with pytest.raises(ValueError, match="specificity: score must be an integer"):
         judge_review(MANUSCRIPT, REVIEW, llm=llm, model="stub")
 
 

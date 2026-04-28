@@ -28,12 +28,12 @@ Given a manuscript and one reviewer's review, score the review on five 1-5 Liker
   - non_redundancy: contributes points distinct from generic boilerplate
                     (5 = distinct; 1 = generic)
 
-Respond with STRICT JSON only — no prose, no markdown fences:
-{"specificity":      {"score": 1-5, "justification": "..."},
- "actionability":    {"score": 1-5, "justification": "..."},
- "persona_fidelity": {"score": 1-5, "justification": "..."},
- "coverage":         {"score": 1-5, "justification": "..."},
- "non_redundancy":   {"score": 1-5, "justification": "..."}}
+Respond with STRICT JSON only — no prose, no markdown fences. Each "score" must be an integer in [1, 5]:
+{"specificity":      {"score": <integer 1-5>, "justification": "..."},
+ "actionability":    {"score": <integer 1-5>, "justification": "..."},
+ "persona_fidelity": {"score": <integer 1-5>, "justification": "..."},
+ "coverage":         {"score": <integer 1-5>, "justification": "..."},
+ "non_redundancy":   {"score": <integer 1-5>, "justification": "..."}}
 """
 
 
@@ -73,8 +73,10 @@ def _parse_dimension(raw: dict, dim: str) -> DimensionScore:
     if not isinstance(entry, dict) or "score" not in entry:
         raise ValueError(f"{dim} must be a dict with 'score' and 'justification'")
     score = entry["score"]
-    if not isinstance(score, int) or not (1 <= score <= 5):
-        raise ValueError(f"{dim} out of range: {score}")
+    if isinstance(score, bool) or not isinstance(score, int):
+        raise ValueError(f"{dim}: score must be an integer, got {type(score).__name__} {score!r}")
+    if not (1 <= score <= 5):
+        raise ValueError(f"{dim} out of range: {score} (must be 1-5)")
     return DimensionScore(score=score, justification=entry.get("justification", ""))
 
 
