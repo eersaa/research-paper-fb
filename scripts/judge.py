@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -75,6 +76,14 @@ def _user_message(manuscript: str, review: Review, profile: ReviewerProfile) -> 
     )
 
 
+_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
+
+
+def _strip_fence(content: str) -> str:
+    m = _FENCE_RE.match(content)
+    return m.group(1) if m else content
+
+
 def _validate_score(raw: dict) -> JudgeScore:
     js = JudgeScore.model_validate(raw)
     for dim in DIMENSIONS:
@@ -98,7 +107,7 @@ def judge_review(
         ],
         model=model,
     )
-    return _validate_score(json.loads(res.content))
+    return _validate_score(json.loads(_strip_fence(res.content)))
 
 
 def _mean(score: JudgeScore) -> float:
