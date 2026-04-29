@@ -16,9 +16,9 @@
 | ------------------------ | ------------------------------------------------------------------------------------------ | ----------------------- |
 | **Classification Agent** | LLM agent that tags the Manuscript with ACM CCS Classes via the `lookup_acm` tool.         | Tagger, classifier      |
 | **Profile Creation Agent** | Hybrid Sampler + LLM agent that produces N Personas for a Run by sampling (Specialty, Stance, Primary Focus, Secondary Focus) tuples under the Diversity Constraint with guaranteed Core Focus coverage. | Persona agent, profiler |
-| **Reviewer Agent**       | LLM agent instantiated once per Persona that writes one Review in parallel with siblings.  | Critic, judge (reserved) |
+| **Reviewer Agent**       | LLM agent instantiated once per Persona that emits one Review. Siblings run sequentially in an inline fan-out loop inside `setup_review_board` (no RedundantPattern in AG2 0.12.1). | Critic, judge (reserved) |
 | **Judge Agent**          | LLM agent in the evaluation harness that scores a Final Report against the Rubric.        | Evaluator, grader       |
-| **Renderer**             | Pure code (not an agent) that compiles Reviews + Classification into the Final Report.    | Compiler, formatter     |
+| **Renderer**             | Pure code (not an agent) that consumes a `RunOutput` in-memory and emits the Final Report markdown; joins each Review to its ReviewerProfile by `reviewer_id`. | Compiler, formatter     |
 
 ## Persona & diversity
 
@@ -50,9 +50,9 @@
 
 | Term                  | Definition                                                                                                                       | Aliases to avoid             |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| **Review Schema**     | The Reviewer JSON shape produced by `write_review`: identity fields (`reviewer_id`, `reviewer_name`, `specialty`, `stance`, `primary_focus`, `secondary_focus`, `profile_summary`) plus the three Aspect fields. No numeric ratings. Defined by the 2026-04-27 merged-template design. | Review form, review template |
+| **Review Schema**     | The slim Pydantic `Review` model in `paperfb/schemas.py`: `reviewer_id` plus the three Aspect fields. Validated via AG2 `response_format=Review`. Identity metadata is NOT in `Review` — it lives on `ReviewerProfile` and is joined back in by the Renderer via `reviewer_id`. No numeric ratings. | Review form, review template |
 | **Aspect**            | One of the three free-text Review Schema sections: `strong_aspects`, `weak_aspects`, `recommended_changes`. Each is a single string grounded in the reviewer's Primary Focus, with Secondary Focus colouring the depth implicitly (no separate `focus_commentary` field). | Comments, notes              |
-| **Profile Summary**   | Free-text reviewer self-introduction emitted alongside the three Aspects (`profile_summary` in the JSON); rendered as the per-reviewer header blurb (stance + primary/secondary focus). Not in `REVIEW_REQUIRED_FIELDS`; produced by the Reviewer Agent's persona prompt. | Bio, intro                   |
+| **Profile Summary**   | One-line reviewer blurb (`profile_summary` field on `ReviewerProfile`) emitted by the Profile Creation Agent alongside the persona prompt; rendered as the per-reviewer header (stance + primary/secondary focus). Lives on the Profile, not on the Review. | Bio, intro                   |
 | **Rubric Language**   | The dimension wording from `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` — relevance/timeliness, content/rigour, originality, clarity. Lives only as **prompt-side scaffolding** spliced into Focus Axis `description` fields in `config/axes.yaml`; never emitted in the Review JSON. | EDAS dimensions, template fields |
 
 ## Evaluation
@@ -69,9 +69,40 @@
 | Term         | Definition                                                                                             | Aliases to avoid    |
 | ------------ | ------------------------------------------------------------------------------------------------------ | ------------------- |
 | **Proxy**    | The OpenRouter-fronted AWS endpoint (`BASE_URL`) speaking OpenAI `/chat/completions`; sole network egress. | API, gateway, LLM endpoint |
-| **Orchestrator** | The thin Python module that runs Classification → Profile Creation → parallel Reviewers → Renderer. | Runner, driver, engine |
+| **Pipeline** | The thin Python module (`paperfb/pipeline.py`) that builds the AG2 agents + handoffs, runs the GroupChat, and assembles a `RunOutput` from `ContextVariables` for the Renderer. Replaced the older `orchestrator.py`. | Orchestrator, runner, driver |
 | **Sampler**  | Deterministic Python component inside Profile Creation that emits N (Reviewer Name, Specialty, Stance, Primary Focus, Secondary Focus) tuples: round-robin Specialty over Weight-sorted CCS Classes, Core Focuses assigned first as Primary Focuses, Secondary Focus by greedy coverage, `(Stance, Primary Focus)` kept unique, Reviewer Name drawn unique-per-Board from `data/finnish_names.json`. | Picker, chooser     |
-| **Tool Call** | A structured function invocation by an agent; only `lookup_acm` and `write_review` are defined in v1. | Function call, action |
+| **Tool Call** | A structured function invocation by an agent. Two tools exist: `lookup_acm` (Classification) and `sample_board` (Profile Creation). Both are executed by the `UserProxyAgent`. The former `write_review` tool has been replaced by Pydantic structured output on the Reviewer. | Function call, action |
+
+## Cross-agent types
+
+The on-the-wire shapes (Pydantic) carried between agents and into the Renderer / Judge. Defined in `paperfb/schemas.py`.
+
+| Term                     | Definition                                                                                            | Aliases to avoid       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------- |
+| **ClassificationResult** | Classification Agent's structured output: `keywords` + 2–5 `CCSClass` entries. Stashed whole into `ContextVariables["classification"]`; only the `classes` paths are forwarded to Profile Creation. | Classification (used loosely), tags |
+| **ReviewerTuple**        | Output of the `sample_board` tool: one (id, name, specialty, stance, primary_focus, secondary_focus) row, pre-persona-prompt. | Tuple, sample row     |
+| **ReviewerProfile**      | A `ReviewerTuple` extended by Profile Creation with `persona_prompt` (full reviewer system message) and `profile_summary` (header blurb). | Profile, reviewer record |
+| **ProfileBoard**         | Profile Creation Agent's structured output: the list of N `ReviewerProfile`s for the Run.             | Board roster, profiles |
+| **BoardReport**          | The aggregated Reviewer output: `reviews` (list of slim `Review`s) + `skipped` (list of `SkippedReviewer`). Built deterministically by `setup_review_board`. | Reviews bundle, panel result |
+| **SkippedReviewer**      | One entry recording a Reviewer that failed to produce a valid `Review`; `id` + `reason`.              | Failed reviewer, error row |
+| **RunOutput**            | Top-level Pydantic container assembled post-chat: `classification + profiles + board`. Both the in-memory handoff to the Renderer and the on-disk artefact at `evaluations/run-<ts>/run.json` consumed by the Judge. | Run JSON, run record |
+
+## AG2 framework
+
+Terms from the [AG2](https://docs.ag2.ai/) agent framework that surface in this project's discourse. Pinned to `ag2==0.12.1`.
+
+| Term                  | Definition                                                                                              | Aliases to avoid    |
+| --------------------- | ------------------------------------------------------------------------------------------------------- | ------------------- |
+| **GroupChat**         | The AG2 multi-agent conversation primitive that the Pipeline runs. Driven by `initiate_group_chat(...)`. | Conversation, chat  |
+| **Default Pattern**   | The AG2 GroupChat pattern this project uses: a linear sequence of agents linked by post-turn handoffs (no built-in routing). | Linear pattern, sequential pattern |
+| **UserProxyAgent**    | The AG2 agent that initiates the chat with the manuscript and doubles as the executor for `lookup_acm` and `sample_board`. `human_input_mode="NEVER"`. | User agent, proxy   |
+| **ConversableAgent**  | The AG2 base agent class used for Classification, Profile Creation, and each Reviewer.                  | Agent (unqualified) |
+| **Handoff**           | A post-turn transition from one agent to the next. Registered via `agent.handoffs.set_after_work(target)`; AG2 0.12.1 has no top-level `AfterWork(...)` decorator. | Edge, transition    |
+| **FunctionTarget**    | Handoff target whose body is a Python function `(last_message, ctx) -> FunctionTargetResult`. Used twice: `classify_to_profile` (sub-field extraction into `ContextVariables`) and `setup_review_board` (inline reviewer fan-out + `BoardReport` assembly). | Hook, transformer   |
+| **AgentTarget**       | Handoff target naming the next speaking agent (e.g. `AgentTarget(profile_agent)`).                      | Next-agent target   |
+| **TerminateTarget**   | Handoff target ending the outer GroupChat. Returned after `setup_review_board` completes.               | End target, stop    |
+| **ContextVariables**  | The hidden cross-agent state dict carried through the GroupChat. LLMs do not see it; Pipeline reads it post-chat to build `RunOutput`. Keys in use: `manuscript`, `run_id`, `classification`, `profiles`, `board`, `expected_reviewer_ids`. | Shared state, context |
+| **structured output** | Pydantic-typed agent response enforced via `response_format=PydanticModel`. Replaces the v1 `write_review` tool and most JSON-shape prompting. | response_format, JSON output |
 
 ## Offline preparation
 
@@ -92,6 +123,9 @@
 - The **Classification Agent** emits 2–5 **CCS Classes**, each a (**Concept Path**, **Weight**) pair.
 - The **Judge Agent** consumes a **Final Report** + its source **Manuscript** + **Reviews** and emits one **Evaluation** scored against the **Rubric**.
 - The **Judge Agent** uses a different underlying model than the **Reviewer Agents** (bias mitigation).
+- The **Pipeline** is one **GroupChat** under the **Default Pattern** with two LLM agents (Classification, Profile Creation) plus the **UserProxyAgent** as initiator and tool executor; Reviewers fan out inline inside `setup_review_board`, not as GroupChat members.
+- A **FunctionTarget** transforms each cross-agent message: `classify_to_profile` extracts `classes` paths into the prompt and stashes the full **ClassificationResult** in **ContextVariables**; `setup_review_board` builds Reviewers from a **ProfileBoard**, runs them, and writes the **BoardReport** into **ContextVariables**.
+- **RunOutput** = **ClassificationResult** + **ProfileBoard** + **BoardReport**; the **Pipeline** assembles it from **ContextVariables** after the chat ends and passes it to the **Renderer**.
 
 ## Example dialogue
 
@@ -109,7 +143,11 @@
 
 > **Dev:** "When the **Judge Agent** scores the **Final Report**, what does it emit?"
 
-> **Domain expert:** "One **Evaluation** with a Likert score per **Rubric Dimension**, equally weighted into an arithmetic mean."
+> **Domain expert:** "One **Evaluation** with a Likert score per **Rubric Dimension**, equally weighted into an arithmetic mean. The Judge actually reads the **RunOutput** JSON, not the markdown — joining each **Review** to its **ReviewerProfile** by `reviewer_id` for fidelity scoring."
+
+> **Dev:** "And the Reviewers — they really run sequentially? The README still says 'parallel'."
+
+> **Domain expert:** "Sequential. The AG2 0.12.1 wiring fans them out inline inside `setup_review_board`; there's no **RedundantPattern** in this version. It's a **FunctionTarget** that builds the Reviewers from the **ProfileBoard**, calls each one, then writes a **BoardReport** into **ContextVariables** before returning a **TerminateTarget** to end the outer **GroupChat**."
 
 ## Flagged ambiguities
 
@@ -124,3 +162,8 @@
 - **"board" vs "reviewers"** — "the reviewers" often refers collectively to the Board. Fine informally, but use **Board** when emphasizing the N-as-a-set (e.g. Diversity Constraint applies across the Board).
 - **"review form" vs "Review Schema"** — the EuCNC/EDAS form in `review-template.txt` is no longer the canonical output shape. Canonical: **Review Schema** for the JSON the Reviewer emits (three Aspects + identity fields, no ratings); reserve "review form / template" for the historical EDAS source that contributed **Rubric Language** to Focus axis descriptions.
 - **"rating" / "rating dimension"** — removed from the system as of 2026-04-27. The Reviewer no longer emits numeric scores; only the **Judge Agent** produces numeric output (per **Rubric Dimension**). If you see "rating" in older docs, treat it as deleted, not deferred.
+- **"orchestrator" vs "Pipeline"** — historical name was *orchestrator* (`paperfb/orchestrator.py`); current name is **Pipeline** (`paperfb/pipeline.py`). The thing also became thinner: most former orchestration logic now lives in **AG2** patterns + **FunctionTarget** handoffs. Use **Pipeline** in new prose.
+- **"parallel reviewers" vs sequential fan-out** — older PLAN.md / README phrasing says reviewers run "in parallel". In the AG2 0.12.1 wiring they run sequentially inside an inline loop in `setup_review_board`. Don't say "parallel" — say *fan-out* or *inline reviewer loop*.
+- **"RunOutput" vs "Final Report"** — both are run-level outputs but distinct: **RunOutput** is the in-memory + on-disk Pydantic structure (`evaluations/run-<ts>/run.json`) consumed by Renderer and Judge; **Final Report** is the markdown the researcher reads (`final_report.md`). Don't conflate.
+- **"agent" (unqualified)** — overloaded across our domain agents (Classification / Profile Creation / Reviewer / Judge), AG2's `ConversableAgent`, and the `UserProxyAgent`. In dialogue, qualify (e.g. **Reviewer Agent**, **UserProxyAgent**) unless context is unambiguous.
+- **"tool" surface** — only `lookup_acm` and `sample_board` are tools. `write_review` was a tool in v1; it has been replaced by Pydantic **structured output** on the Reviewer. Don't mention `write_review` in new prose.

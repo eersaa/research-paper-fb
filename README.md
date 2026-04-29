@@ -28,7 +28,7 @@ Classification Agent  ──(tool: lookup_acm)──► data/acm_ccs.json → Cl
     ↓
 Profile Creation Agent ──(tool: sample_board)──► N personas → ProfileBoard
     ↓
-Reviewer Agents (inline fan-out, N parallel) → BoardReport
+Reviewer Agents (inline fan-out, N sequential) → BoardReport
     ↓
 Renderer (pure Python, reads RunOutput)
     ↓
@@ -46,9 +46,12 @@ The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No 
 ## Evaluation
 
 ```bash
-# After running the pipeline, judge each reviewer's review:
-uv run python scripts/judge.py --manuscript path/to/manuscript.md
-# → evaluations/run-<UTC-timestamp>.json
+# After running the pipeline (which writes evaluations/run-<ts>/run.json),
+# judge each reviewer's review:
+uv run python scripts/judge.py \
+    --manuscript path/to/manuscript.md \
+    --run-dir evaluations/run-<ts>
+# → evaluations/run-<ts>/judge.json
 ```
 
 Each reviewer is scored on five 1–5 Likert dimensions: `specificity`, `actionability`, `persona_fidelity`, `coverage`, `non_redundancy`. Each dimension has its own justification. The output JSON also includes a `mean` per reviewer and a `board_mean` across all reviewers. The judge defaults to `cfg.models.judge` (different from the reviewer model) to reduce self-preference bias.

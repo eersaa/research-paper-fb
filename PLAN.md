@@ -2,7 +2,7 @@
 
 Goal: give constructive feedback to a researcher on a manuscript, via a small board of LLM reviewer agents with diverse stances and focus areas.
 
-Full design: [docs/superpowers/specs/2026-04-24-research-paper-feedback-system-design.md](docs/superpowers/specs/2026-04-24-research-paper-feedback-system-design.md).
+Full design: [docs/superpowers/specs/2026-04-29-ag2-refactor-design.md](docs/superpowers/specs/2026-04-29-ag2-refactor-design.md) (current — AG2 framework). Original v1 design: [docs/superpowers/specs/2026-04-24-research-paper-feedback-system-design.md](docs/superpowers/specs/2026-04-24-research-paper-feedback-system-design.md).
 
 ## System operation
 
@@ -12,21 +12,21 @@ Offline prep (run once, committed):
 - `scripts/build_finnish_names.py` → `data/finnish_names.json`
 - Sample manuscripts: 3 published-with-CCS papers delivered as `samples/<paper-id>/manuscript.md` (PDF→markdown conversion happens outside this project)
 
-Runtime:
+Runtime (AG2 group chat with Pydantic-typed structured outputs):
 
 1. User provides manuscript (markdown only; PDFs are converted offline).
-2. **Classification Agent** runs a two-phase loop: extract paper-keywords (or synthesise from title/abstract/headings), then drive `lookup_acm` queries to pick 2–5 ACM CCS classes with weights. Keywords are logged but not propagated downstream.
-3. **Profile Creation Agent** samples N reviewer tuples `(specialty from ACM classes, stance, primary_focus, secondary_focus)`, picks a unique Finnish given name per reviewer from `data/finnish_names.json`, and generates a persona for each. Core focuses (`methods, results, novelty`) always covered.
-4. **Reviewer Agents** (N in parallel) each emit a review JSON via `write_review`. Schema = three free-text aspects only (Strong / Weak / Recommended Changes); numeric ratings are deliberately dropped — see [docs/superpowers/specs/2026-04-27-merged-review-template-design.md](docs/superpowers/specs/2026-04-27-merged-review-template-design.md).
-5. **Renderer** (pure code) compiles all review JSONs into `final_report.md`. Each review section opens with the reviewer's Finnish name and renders the three aspects as labeled prose subsections.
+2. **Classification Agent** drives a `lookup_acm` tool loop and emits a `ClassificationResult` (`response_format=ClassificationResult`). Keywords are written to `context_variables` but the post-turn handoff (`classify_to_profile`) forwards only the class paths downstream.
+3. **Profile Creation Agent** calls the deterministic `sample_board` tool once and emits a `ProfileBoard` (one `ReviewerProfile` per reviewer) via `response_format=ProfileBoard`. Core focuses (`methods, results, novelty`) always covered; Finnish names unique per board.
+4. **Reviewer fan-out** runs inside the `setup_review_board` post-turn handoff: each `ReviewerProfile` is materialised as a one-shot `ConversableAgent` with `response_format=Review` and called sequentially with the manuscript. Successes go into `BoardReport.reviews`; per-reviewer exceptions go into `BoardReport.skipped`. No Chair LLM aggregator — `BoardReport` is built deterministically in Python.
+5. **Renderer** (pure code) consumes the in-memory `RunOutput` (= classification + profiles + board) and joins each `Review` to its `ReviewerProfile` by `reviewer_id` to compose `final_report.md`. The serialised `RunOutput` is also written to `evaluations/run-<ts>/run.json` for the Judge.
 
-Separate evaluation harness (deferred — built last): **Judge Agent** scores reports on specificity, actionability, persona-fidelity, coverage, non-redundancy.
+Separate evaluation harness: **Judge Agent** (`scripts/judge.py`, bypasses AG2) reads `evaluations/run-<ts>/run.json`, scores each `Review` against the matching `ReviewerProfile` on five Likert dimensions (specificity, actionability, persona-fidelity, coverage, non-redundancy), writes `evaluations/run-<ts>/judge.json`.
 
 ## Requirements (met)
 
 - ≥3 agents: Classification, Profile Creation, Reviewer (×N). Judge in eval harness.
-- Orchestration pattern: sequential pipeline + parallel fan-out.
-- ≥1 tool call: `lookup_acm`, `write_review`.
+- Orchestration pattern: sequential AG2 group chat + inline reviewer fan-out (one-shot `generate_reply` per reviewer).
+- ≥1 tool call: `lookup_acm`, `sample_board`.
 
 ## Key decisions
 
@@ -37,11 +37,12 @@ Separate evaluation harness (deferred — built last): **Judge Agent** scores re
 - **Axes:** configurable in `config/axes.yaml`. Defaults cover 8 stances × 8 focuses; 3 core focuses. Each entry carries a `description` that gets spliced into the persona prompt — this is where the rubric language from both review templates lives.
 - **ACM tool:** deterministic JSON lookup over a prebuilt CCS dump, not embeddings.
 - **Classification flow:** keyword extraction (paper-stated or synthesised) → `lookup_acm` queries → class selection. Keywords logged, not propagated downstream — Profile Creation receives `{classes: [...]}` only.
-- **Reviewer schema:** three free-text aspects only (`strong_aspects`, `weak_aspects`, `recommended_changes`). Numeric ratings dropped — LLM-generated 1–5 scores were judged low-signal as researcher feedback. Rubric language from `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` is absorbed into focus-axis descriptions on the prompt side. See [docs/superpowers/specs/2026-04-27-merged-review-template-design.md](docs/superpowers/specs/2026-04-27-merged-review-template-design.md).
+- **Reviewer schema:** slim — only `reviewer_id` + three free-text aspects (`strong_aspects`, `weak_aspects`, `recommended_changes`). Identity metadata (name, specialty, stance, focus) lives on `ReviewerProfile` and is joined back in by the renderer via `reviewer_id`. Numeric ratings dropped. Rubric language from `review-template.txt` (EuCNC/EDAS) and `review-template2.txt` is absorbed into focus-axis descriptions on the prompt side. See [docs/superpowers/specs/2026-04-27-merged-review-template-design.md](docs/superpowers/specs/2026-04-27-merged-review-template-design.md).
 - **Reviewer naming:** sampler picks a unique Finnish given name from `data/finnish_names.json` per reviewer; surfaced in persona prompt and rendered review header.
-- **Transport:** OpenAI `/chat/completions` via the provided proxy — routes to any course-recommended text model (Claude Haiku, GPT-4.1-mini, Gemini Flash).
-- **Default model:** `anthropic/claude-3.5-haiku`; judge uses a different model for bias mitigation.
-- **Output:** `RunOutput` (Pydantic, in-memory) → rendered markdown. No per-reviewer JSON files written at runtime.
+- **Transport:** OpenAI `/chat/completions` via the provided proxy. Per `2026-04-29-ag2-refactor-design.md` §5.1, every structured-output agent (Classification, Profile Creation, Reviewer) is pinned to OpenAI/Google because Anthropic Claude does not honour `response_format` through the proxy.
+- **Default model:** `openai/gpt-4.1-mini` for all chat agents; Judge runs on `google/gemini-2.5-flash-lite` (different family, bias mitigation).
+- **Output:** `RunOutput` (Pydantic, in-memory: `classification + profiles + board`) → rendered markdown at `final_report.md`; serialised `RunOutput` at `evaluations/run-<ts>/run.json` (Judge input). No per-reviewer JSON files written at runtime.
+- **Logging:** AG2 `safeguard_llm_outputs` hooks on classification + profile_creation agents write `logs/run-<ts>.jsonl`. Any string content >1024 bytes is stored as `{sha256, bytes}` rather than cleartext, so the manuscript body never lands on disk in plaintext.
 - **Evaluation:** separate LLM-as-judge harness with a 5-dimension Likert rubric. Judge implemented test-first.
 - **Implementation phasing:** Wave 1 = core pipeline end-to-end (Classification → Profile Creation → Reviewers → Renderer + offline prep). Wave 2 (deferred to last) = Judge harness, cost / token-usage reporting aggregation, EDAS rubric capture.
 - **No-leakage:** only local file writes + proxy as network egress.
