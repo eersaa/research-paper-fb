@@ -96,3 +96,26 @@ def test_pipeline_propagates_skipped_reviewers(cfg, monkeypatch):
     run = pl.run(manuscript="hello", cfg=cfg)
     assert {s.id for s in run.board.skipped} == {"r2", "r3"}
     assert len(run.board.reviews) == 1
+
+
+def test_pipeline_writes_logs_jsonl(cfg, monkeypatch, tmp_path):
+    """Verifies _run_chat opens the log file. Real content depends on AG2 hook
+    path; we just check the file is created with at least one event."""
+    from paperfb import pipeline as pl
+    from paperfb.logging_hook import JsonlLogger
+
+    fake_result, *_ = _fake_chat_result()
+    captured: list[Path] = []
+
+    def fake_run_chat(**kw):
+        log_path = Path(cfg.paths.logs_dir) / f"{kw['ts']}.jsonl"
+        with JsonlLogger(log_path) as lg:
+            lg.log_event({"agent": "test", "role": "assistant", "content": "ok"})
+        captured.append(log_path)
+        return fake_result
+
+    monkeypatch.setattr(pl, "_run_chat", fake_run_chat)
+
+    pl.run(manuscript="hello", cfg=cfg)
+    assert captured and captured[0].exists()
+    assert captured[0].read_text().strip() != ""

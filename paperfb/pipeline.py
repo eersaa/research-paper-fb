@@ -60,6 +60,7 @@ from paperfb.handoffs import (
     build_setup_review_board,
     classify_to_profile,
 )
+from paperfb.logging_hook import JsonlLogger
 from paperfb.schemas import BoardReport, ClassificationResult, ProfileBoard, RunOutput
 
 
@@ -104,6 +105,24 @@ def _wrap_handoff(fn: Any) -> Any:
     return wrapper
 
 
+def _make_llm_output_hook(logger: JsonlLogger, agent_name: str):
+    """Return a safeguard_llm_outputs hook that logs each LLM response.
+
+    AG2 0.12.1: safeguard_llm_outputs hooks receive (response: str | dict)
+    and must return the (optionally modified) response. We observe-and-pass-through.
+    Content >1024 bytes is stored as {sha256, bytes} per spec §6.7.
+    """
+    def hook(response: Any) -> Any:
+        content = response if isinstance(response, str) else json.dumps(response, ensure_ascii=False)
+        logger.log_event({
+            "agent": agent_name,
+            "role": "assistant",
+            "content": content,
+        })
+        return response
+    return hook
+
+
 def _run_chat(*, manuscript: str, cfg: Config, ts: str) -> Any:
     """Build and run the AG2 GroupChat. Returns context_variables dict-like.
 
@@ -113,95 +132,126 @@ def _run_chat(*, manuscript: str, cfg: Config, ts: str) -> Any:
     - The outer chat terminates after setup_review_board returns TerminateTarget().
     - initiate_group_chat returns (ChatResult, ContextVariables, Agent); we
       return a lightweight object exposing .context_variables for pipeline.run().
+
+    Logging (spec §6.5, §6.7):
+    - JsonlLogger writes logs/run-<ts>.jsonl; closed in finally.
+    - chat_start event references manuscript by byte-count only (non-leakage).
+    - Per-message events via safeguard_llm_outputs hooks on classification and
+      profile agents; content >1024 bytes auto-redacted by log_event.
     """
-    classification_cfg = _build_llm_config(cfg, cfg.models.classification)
-    profile_cfg = _build_llm_config(cfg, cfg.models.profile_creation)
-    reviewer_cfg = _build_llm_config(cfg, cfg.models.reviewer)
-
-    user_proxy = UserProxyAgent(
-        name="user",
-        human_input_mode="NEVER",
-        code_execution_config=False,
-    )
-
-    classification_agent, lookup_acm_fn = build_classification_agent(
-        llm_config=classification_cfg,
-        ccs_path=Path(cfg.paths.acm_ccs),
-        max_classes=cfg.classification.max_classes,
-    )
-    profile_agent, sample_board_fn = build_profile_creation_agent(
-        llm_config=profile_cfg,
-        axes=cfg.axes,
-        names_path=Path(cfg.paths.finnish_names),
-        count=cfg.reviewers.count,
-        core_focuses=cfg.reviewers.core_focuses,
-        enable_secondary=cfg.reviewers.secondary_focus_per_reviewer,
-        seed=cfg.reviewers.seed,
-    )
-
-    # Tool wiring
-    user_proxy.register_for_execution(name="lookup_acm")(lookup_acm_fn)
-    classification_agent.register_for_llm(
-        name="lookup_acm",
-        description=(
-            "Search the ACM CCS for concept paths matching keywords. "
-            "Multi-token AND, word-boundary, case-insensitive."
-        ),
-    )(lookup_acm_fn)
-
-    user_proxy.register_for_execution(name="sample_board")(sample_board_fn)
-    profile_agent.register_for_llm(
-        name="sample_board",
-        description=(
-            "Sample N reviewer tuples deterministically. n: int, "
-            "classes: list[CCSClass], optional seed: int."
-        ),
-    )(sample_board_fn)
-
-    setup_review_board = build_setup_review_board(
-        reviewer_llm_config=reviewer_cfg,
-        build_reviewer=build_reviewer_agent,
-    )
-
-    # Post-turn handoffs.
-    # Spike confirmed: set_after_work takes a positional TransitionTarget, not keyword.
-    # FunctionTarget validates that fn accepts (output, ctx) — wrapper satisfies this.
-    classification_agent.handoffs.set_after_work(
-        FunctionTarget(_wrap_handoff(classify_to_profile))
-    )
-    profile_agent.handoffs.set_after_work(
-        FunctionTarget(_wrap_handoff(setup_review_board))
-    )
-
-    context_variables = ContextVariables(data={
-        "manuscript": manuscript,
-        "run_id": ts,
+    log_path = Path(cfg.paths.logs_dir) / f"{ts}.jsonl"
+    logger = JsonlLogger(log_path)
+    logger.log_event({
+        "agent": "pipeline",
+        "role": "system",
+        "content": "chat_start",
+        "manuscript_bytes": len(manuscript.encode("utf-8")),
     })
 
-    pattern = DefaultPattern(
-        agents=[classification_agent, profile_agent],
-        initial_agent=classification_agent,
-        user_agent=user_proxy,
-        context_variables=context_variables,
-    )
+    try:
+        classification_cfg = _build_llm_config(cfg, cfg.models.classification)
+        profile_cfg = _build_llm_config(cfg, cfg.models.profile_creation)
+        reviewer_cfg = _build_llm_config(cfg, cfg.models.reviewer)
 
-    # Spike confirmed: initiate_group_chat(pattern, messages, max_rounds)
-    # returns (ChatResult, ContextVariables, last_agent).
-    # user_proxy.initiate_chat is NOT for patterns — it takes a ConversableAgent.
-    _chat_result, final_ctx, _last_agent = initiate_group_chat(
-        pattern=pattern,
-        messages=manuscript,
-        max_rounds=20,
-    )
+        user_proxy = UserProxyAgent(
+            name="user",
+            human_input_mode="NEVER",
+            code_execution_config=False,
+        )
 
-    # Return a lightweight object exposing .context_variables so pipeline.run()
-    # can access it uniformly (the monkeypatch in tests sets .context_variables
-    # directly on a MagicMock, so this shape matches).
-    class _Result:
-        def __init__(self, ctx: ContextVariables) -> None:
-            self.context_variables = ctx
+        classification_agent, lookup_acm_fn = build_classification_agent(
+            llm_config=classification_cfg,
+            ccs_path=Path(cfg.paths.acm_ccs),
+            max_classes=cfg.classification.max_classes,
+        )
+        profile_agent, sample_board_fn = build_profile_creation_agent(
+            llm_config=profile_cfg,
+            axes=cfg.axes,
+            names_path=Path(cfg.paths.finnish_names),
+            count=cfg.reviewers.count,
+            core_focuses=cfg.reviewers.core_focuses,
+            enable_secondary=cfg.reviewers.secondary_focus_per_reviewer,
+            seed=cfg.reviewers.seed,
+        )
 
-    return _Result(final_ctx)
+        # Per-message logging via safeguard_llm_outputs (Path B).
+        # Hook observes and returns the response unchanged; redaction applied inside log_event.
+        classification_agent.register_hook(
+            "safeguard_llm_outputs",
+            _make_llm_output_hook(logger, classification_agent.name),
+        )
+        profile_agent.register_hook(
+            "safeguard_llm_outputs",
+            _make_llm_output_hook(logger, profile_agent.name),
+        )
+
+        # Tool wiring
+        user_proxy.register_for_execution(name="lookup_acm")(lookup_acm_fn)
+        classification_agent.register_for_llm(
+            name="lookup_acm",
+            description=(
+                "Search the ACM CCS for concept paths matching keywords. "
+                "Multi-token AND, word-boundary, case-insensitive."
+            ),
+        )(lookup_acm_fn)
+
+        user_proxy.register_for_execution(name="sample_board")(sample_board_fn)
+        profile_agent.register_for_llm(
+            name="sample_board",
+            description=(
+                "Sample N reviewer tuples deterministically. n: int, "
+                "classes: list[CCSClass], optional seed: int."
+            ),
+        )(sample_board_fn)
+
+        setup_review_board = build_setup_review_board(
+            reviewer_llm_config=reviewer_cfg,
+            build_reviewer=build_reviewer_agent,
+        )
+
+        # Post-turn handoffs.
+        # Spike confirmed: set_after_work takes a positional TransitionTarget, not keyword.
+        # FunctionTarget validates that fn accepts (output, ctx) — wrapper satisfies this.
+        classification_agent.handoffs.set_after_work(
+            FunctionTarget(_wrap_handoff(classify_to_profile))
+        )
+        profile_agent.handoffs.set_after_work(
+            FunctionTarget(_wrap_handoff(setup_review_board))
+        )
+
+        context_variables = ContextVariables(data={
+            "manuscript": manuscript,
+            "run_id": ts,
+        })
+
+        pattern = DefaultPattern(
+            agents=[classification_agent, profile_agent],
+            initial_agent=classification_agent,
+            user_agent=user_proxy,
+            context_variables=context_variables,
+        )
+
+        # Spike confirmed: initiate_group_chat(pattern, messages, max_rounds)
+        # returns (ChatResult, ContextVariables, last_agent).
+        # user_proxy.initiate_chat is NOT for patterns — it takes a ConversableAgent.
+        _chat_result, final_ctx, _last_agent = initiate_group_chat(
+            pattern=pattern,
+            messages=manuscript,
+            max_rounds=20,
+        )
+
+        logger.log_event({"agent": "pipeline", "role": "system", "content": "chat_end"})
+
+        # Return a lightweight object exposing .context_variables so pipeline.run()
+        # can access it uniformly (the monkeypatch in tests sets .context_variables
+        # directly on a MagicMock, so this shape matches).
+        class _Result:
+            def __init__(self, ctx: ContextVariables) -> None:
+                self.context_variables = ctx
+
+        return _Result(final_ctx)
+    finally:
+        logger.close()
 
 
 def run(*, manuscript: str, cfg: Config) -> RunOutput:
