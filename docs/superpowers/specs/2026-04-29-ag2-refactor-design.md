@@ -23,72 +23,69 @@ A course requirement mandates the use of the [AG2 agent framework](https://docs.
 
 ## 2. Architecture
 
-A single top-level GroupChat using AG2's **Default Pattern** with handoff edges encodes the linear pipeline. The user enters via a **UserProxyAgent** whose initiating message is the manuscript text. The Chair Agent owns the reviewer board: it consumes `ProfileBoard`, instantiates the reviewer agents, dispatches them via a **nested Redundant Pattern**, and assembles the `BoardReport`. A paired **Tool Executor Agent** runs Chair's deterministic tools.
+A single top-level GroupChat using AG2's **Default Pattern** with handoff edges encodes the linear pipeline. The user enters via a **UserProxyAgent** that doubles as the tool executor for the linear-leg agents. The reviewer board is a **nested Redundant Pattern** whose agents are constructed at runtime by a `FunctionTarget` on ProfileCreation's handoff — exactly the AG2-idiomatic point at which to materialise downstream agents from upstream structured output. Chair is the aggregator *inside* RedundantPattern (mirroring the taskmaster/evaluator role in the AG2 redundant-pattern example).
 
 ```text
-UserProxyAgent (human_input_mode="NEVER")
+UserProxyAgent (human_input_mode="NEVER";
+                also serves as tool executor for lookup_acm and sample_board)
         │
         │ initiate_chat(message=manuscript_text)
         ▼
-┌─────────────────────────┐  tool: lookup_acm
+┌─────────────────────────┐  tool: lookup_acm  (executed by UserProxy)
 │ Classification Agent    │  output: ClassificationResult (Pydantic)
 └─────────────────────────┘
         │ AfterWork → FunctionTarget(classify_to_profile):
+        │   parses ClassificationResult
         │   writes context_variables["acm_classes"]
-        │   forwards a curated message (no keywords) to ProfileCreation
+        │   forwards a curated, classes-only message to ProfileCreation
         ▼
-┌─────────────────────────┐  tool: sample_board (deterministic)
+┌─────────────────────────┐  tool: sample_board  (executed by UserProxy)
 │ ProfileCreation Agent   │  output: ProfileBoard (Pydantic)
 └─────────────────────────┘
-        │ AfterWork → AgentTarget(Chair)
-        │   ProfileBoard travels in chat; manuscript still in context
+        │ AfterWork → FunctionTarget(setup_review_board):
+        │   parses ProfileBoard
+        │   builds N reviewer ConversableAgents from profiles
+        │   constructs RedundantPattern(reviewers + Chair as aggregator)
+        │   returns NestedChatTarget(redundant_pattern)
         ▼
-┌──────────────────────────────────────────────────────────────┐
-│ Chair Agent (LLM, decider)                                   │
-│   tools (executed by Tool Executor Agent):                   │
-│     1. convene_review_board(profiles, manuscript)            │
-│        Python: builds N reviewer ConversableAgents,          │
-│        runs nested RedundantPattern, returns list[Review]    │
-│     2. assemble_board_report(reviews, classification)        │
-│        Python: bundles into BoardReport                      │
-└──────────────────────────────────────────────────────────────┘
-                         │
-                         ▼ (inside convene_review_board)
-            ┌────────────────────────────────────────┐
-            │ RedundantPattern (nested GroupChat)    │
-            │   each sibling = isolated nested chat, │
-            │   sees only the task message           │
-            │   (manuscript + classification ctx)    │
-            │  ┌────┐  ┌────┐         ┌────┐         │
-            │  │ R1 │  │ R2 │   ...   │ RN │         │  each: max_turns=1,
-            │  └────┘  └────┘         └────┘         │         no tools,
-            │     │      │              │            │         response_format=Review
-            │     └──────┴──────────────┘            │
-            │                ▼                       │
-            │     [list[Review] returned to Chair]   │
-            └────────────────────────────────────────┘
-                         │
-                         ▼ (Chair's final structured response)
-                    BoardReport
-                         │
-                         ▼
-                  Renderer (pure code)
-                         │
-                         ▼
-                   final_report.md
+┌────────────────────────────────────────────────────────────┐
+│ RedundantPattern (nested GroupChat)                        │
+│   each sibling = isolated nested chat, sees only the task  │
+│   (the manuscript), mediated by extract_task_message       │
+│                                                            │
+│   ┌────┐  ┌────┐         ┌────┐                            │ each reviewer:
+│   │ R1 │  │ R2 │   ...   │ RN │                            │   max_turns=1,
+│   └────┘  └────┘         └────┘                            │   no tools,
+│      │     │               │                               │   response_format=Review
+│      └─────┴───────────────┘                               │
+│                  ▼                                         │
+│           ┌────────────┐                                   │ Chair:
+│           │   Chair    │  pure aggregator; bundles N       │   response_format=BoardReport,
+│           │ (aggregator)│ Reviews + classification + skipped│  no LLM reasoning beyond
+│           └────────────┘                                   │   collation
+└────────────────────────────────────────────────────────────┘
+                  │
+                  ▼
+              BoardReport
+                  │
+                  ▼
+           Renderer (pure code)
+                  │
+                  ▼
+            final_report.md
 ```
 
 ### 2.1 AG2 features in use
 
-- `UserProxyAgent` — entry point; injects the manuscript as the initiating message.
+- `UserProxyAgent` — entry point; injects the manuscript as the initiating message. Also doubles as the tool executor for `lookup_acm` and `sample_board` (`human_input_mode="NEVER"`, no `llm_config`).
 - `GroupChat` + **Default Pattern** — declarative handoff edges between agents.
 - `AfterWork(target=...)` — unconditional sequential handoff after an agent's turn completes.
-- `FunctionTarget` + `FunctionTargetResult` — handoff transformer that extracts sub-fields from a structured response and writes `context_variables` for downstream agents.
+- `FunctionTarget` + `FunctionTargetResult` — handoff transformer that parses a structured response, writes `context_variables`, and forwards a curated message *or* transitions to a different target (including a nested chat). Used twice: (a) classification → profile creation (sub-field extraction), (b) profile creation → reviewer board (runtime agent construction + handoff to nested redundant pattern).
+- `NestedChatTarget` — handoff target that runs a nested GroupChat. Used to dispatch the runtime-constructed RedundantPattern.
 - `ContextVariables` — hidden cross-agent state. Not visible to LLMs by default; agents read via tool parameters or templated system messages.
-- **Redundant Pattern** — nested group chat for reviewer fan-out. Each sibling runs in its own nested chat, isolated from siblings and from the broader orchestration. Sequential execution under the hood.
-- **Tool Executor Agent** — paired `UserProxyAgent` with `human_input_mode="NEVER"` and no `llm_config`; registered to *execute* Chair's tools while Chair *selects* them via LLM. Splits `register_for_llm` (Chair) from `register_for_execution` (Executor).
+- **Redundant Pattern** — nested group chat for reviewer fan-out. Each sibling runs in its own nested chat, isolated from siblings and from the broader orchestration. Sequential execution under the hood. Chair is the aggregator inside this pattern.
 - `response_format=PydanticModel` — every cross-agent message is a Pydantic-validated object.
-- Tool registration via `@register_for_llm(...)` / `@register_for_execution(...)` decorators.
+- Tool registration via `@register_for_llm(...)` (on the calling agent) / `@register_for_execution(...)` (on the executor) decorators.
 - AG2 logging hooks — JSONL run log replaces the custom `LLMClient` logging.
 
 ### 2.2 What disappears
@@ -198,35 +195,57 @@ class BoardReport(BaseModel):
 - **Tool:** `sample_board(n, classes, stances, focuses, core_focuses, seed) -> list[ReviewerTuple]` — deterministic Python, returns Pydantic models. Wraps the existing sampler under `paperfb/tools/sampler.py`.
 - **Persona generation strategy:** single LLM step producing all N personas at once via structured output. Each `ReviewerProfile.persona_prompt` is a full system message — embeds the assigned Finnish given name, specialty grounding, stance description, primary/secondary focus rubric language. (Per-tuple sub-loops are YAGNI.)
 - **Structured output:** `response_format=ProfileBoard`.
-- **Handoff:** `AfterWork(target=AgentTarget(chair))`. The serialised `ProfileBoard` enters Chair's chat history; the manuscript is also still in context. Chair picks them up from there.
+- **Handoff:** `AfterWork(target=FunctionTarget(setup_review_board))`. The function parses `ProfileBoard`, builds N reviewer `ConversableAgent`s via `build_reviewer_agent` (§4.3), constructs a `RedundantPattern(agents=reviewers, aggregator=chair, task=context_variables["manuscript"])`, and returns `FunctionTargetResult(target=NestedChatTarget(redundant_pattern))`. Runtime agent construction happens here, in plain Python, at the canonical AG2 boundary for "build downstream agents from upstream structured output." See §4.4 for the function body.
 
-### 4.3 Reviewer Agent (factory; instantiated by Chair's tool)
+### 4.3 Reviewer Agent (factory; instantiated by `setup_review_board`)
 
 - **Factory:** `build_reviewer_agent(profile: ReviewerProfile, llm_config) -> ConversableAgent`.
-- **Constructed by:** `convene_review_board` tool (§4.4) at runtime, one per `ReviewerProfile`.
-- **System prompt:** `profile.persona_prompt` verbatim. No additional layering — stance/focus rubric language is already baked in by ProfileCreation.
-- **Input received per nested chat:** the manuscript text as the redundant-task message; `context_variables["acm_classes"]` available via tool params or templated system message if a reviewer needs ACM context.
+- **Constructed by:** `setup_review_board` FunctionTarget (§4.4) at runtime, one per `ReviewerProfile`.
+- **System prompt:** `profile.persona_prompt` verbatim. ProfileCreation has already embedded the assigned name, ACM specialty, stance description, primary/secondary focus rubric language. Nothing else is layered on.
+- **Input received per nested chat:** the manuscript text as the redundant-task message. That is all. ACM classification context does **not** flow to reviewers — the specialty (an ACM class path) is already part of the persona prompt.
 - **No tools.** Pydantic structured output replaces the previous `write_review` tool.
 - **Structured output:** `response_format=Review`.
 - **Turn limit:** `max_consecutive_auto_reply=1`. Reviewers respond once and are done.
-- **Isolation:** RedundantPattern places each reviewer in its own nested chat. Siblings cannot see each other; the broader orchestration transcript is hidden. Only the task message reaches them, mediated by `extract_task_message`.
+- **Isolation:** RedundantPattern places each reviewer in its own nested chat. Siblings cannot see each other; the broader orchestration transcript is hidden. Only the manuscript reaches them, mediated by `extract_task_message`.
 
-### 4.4 Chair Agent + Tool Executor Agent
+### 4.4 `setup_review_board` FunctionTarget + Chair (aggregator)
 
-Chair owns reviewer-board lifecycle: it consumes `ProfileBoard`, dispatches reviewers, and assembles the final `BoardReport`. Its work is pure orchestration of two deterministic tools, executed by a paired Tool Executor Agent.
+Runtime reviewer construction lives in a `FunctionTarget` on ProfileCreation's handoff. This is the AG2-idiomatic location for "materialise downstream agents from upstream structured output" — analogous to how the [redundant-pattern example](https://docs.ag2.ai/latest/docs/user-guide/advanced-concepts/pattern-cookbook/redundant/) builds its agent queue at config time, only here the inputs come from a prior agent's response. No tool dispatch, no extra LLM call.
+
+```python
+def setup_review_board(
+    agent_output: str,
+    context_variables: ContextVariables,
+) -> FunctionTargetResult:
+    board = ProfileBoard.model_validate_json(agent_output)
+    reviewers = [
+        build_reviewer_agent(p, reviewer_llm_config)
+        for p in board.reviewers
+    ]
+    chair = build_chair(chair_llm_config)  # aggregator
+    pattern = RedundantPattern(
+        agents=reviewers,
+        aggregator=chair,
+        task=context_variables["manuscript"],
+        # extract_task_message: each reviewer sees only the manuscript
+    )
+    context_variables["profiles"] = board.model_dump()  # for renderer header
+    return FunctionTargetResult(
+        target=NestedChatTarget(pattern.as_nested_chat()),
+        context_variables=context_variables,
+    )
+```
+
+(Final API names — `RedundantPattern` constructor signature, `as_nested_chat()` form — to be confirmed against the AG2 version pinned at implementation time. The shape is fixed; the surface may shift.)
+
+**Chair Agent (aggregator inside RedundantPattern):**
 
 - **Module:** `paperfb/agents/chair.py`
-- **Chair (LLM decider):** `ConversableAgent` with a short system message instructing it to (a) call `convene_review_board` once with the `ProfileBoard` from chat history and the manuscript from `context_variables`, then (b) call `assemble_board_report` with the resulting reviews and the classification, then (c) emit the resulting `BoardReport` as its structured response. Two LLM calls total (one per tool selection); no reasoning beyond tool dispatch.
-- **Tool Executor (no LLM):** `UserProxyAgent(name="executor", human_input_mode="NEVER", code_execution_config=False)` — executes Chair's tools deterministically. No `llm_config`. Both tools are registered with `@register_for_llm(caller=chair)` and `@register_for_execution(executor=executor)`.
-- **Tool 1 — `convene_review_board(profiles: list[ReviewerProfile], manuscript: str) -> list[Review]`:**
-  - Builds N reviewer `ConversableAgent`s via `build_reviewer_agent` (§4.3).
-  - Constructs a `RedundantPattern` over them with the manuscript + `acm_classes` from `context_variables` as the task.
-  - Runs the pattern (sequential under the hood); collects each sibling's `Review`.
-  - Returns `list[Review]`. Reviewer failures are caught here and surfaced as `SkippedReviewer` entries in `context_variables["skipped"]`.
-- **Tool 2 — `assemble_board_report(reviews: list[Review], classification: ClassificationResult) -> BoardReport`:**
-  - Pure bundling. Reads `context_variables["skipped"]`, combines with `reviews` and `classification` into a `BoardReport`. No reasoning.
-- **Chair structured output:** `response_format=BoardReport`. After tool 2 returns, Chair emits the bundled object.
-- **Why both an LLM Chair and a non-LLM Executor.** Pure tool-executor patterns (executor only, no Chair) require a fixed sequence; with a thin LLM Chair, the framework's tool-selection idiom is on display and we get per-tool retry behaviour for free. Cost is two cheap LLM calls. If profiling shows this matters, Chair can be replaced with a deterministic sequential dispatcher in implementation.
+- **Builder:** `build_chair(llm_config) -> ConversableAgent`
+- **Role:** receives the `Review` objects emitted by the redundant siblings, plus the upstream `ClassificationResult` (read from `context_variables["acm_classes"]`) and any `SkippedReviewer` entries (read from `context_variables["skipped"]`). Emits `BoardReport` as its structured response. No reasoning, no synthesis — collation only.
+- **System prompt:** one paragraph instructing Chair to assemble the per-reviewer reviews verbatim into a `BoardReport`, preserving every field; no editing, no merging, no commentary.
+- **Structured output:** `response_format=BoardReport`.
+- **Why an LLM agent and not a deterministic callable.** AG2's documented RedundantPattern uses an LLM `ConversableAgent` aggregator (e.g. `evaluator_agent` calling `evaluate_and_select`). Following that idiom keeps us inside the framework's documented surface. Cost is one cheap LLM call. If a future AG2 version exposes a deterministic-callable aggregator hook on `RedundantPattern`, Chair can be swapped for it without changing any other agent.
 
 ## 5. Configuration
 
@@ -278,9 +297,11 @@ Default Pattern handoffs encoded on each agent at construction time:
 
 | From | Handoff | To | Notes |
 | --- | --- | --- | --- |
-| Classification | `AfterWork(target=FunctionTarget(classify_to_profile))` | ProfileCreation | Function extracts `result.classes`, writes `context_variables["acm_classes"]` and `context_variables["manuscript"]`, forwards a curated message. Keywords stay in transcript. |
-| ProfileCreation | `AfterWork(target=AgentTarget(chair))` | Chair | `ProfileBoard` enters Chair's chat history. |
-| Chair | (no handoff — terminal node) | — | Chair's structured `BoardReport` response ends the GroupChat. |
+| (UserProxy entry) | `initiate_chat(message=manuscript_text)` | Classification | UserProxy also stashes the manuscript in `context_variables["manuscript"]` for downstream `FunctionTarget`s to read. |
+| Classification | `AfterWork(target=FunctionTarget(classify_to_profile))` | ProfileCreation | Function extracts `result.classes`, writes `context_variables["acm_classes"]`, forwards a curated message. Keywords stay in transcript only. |
+| ProfileCreation | `AfterWork(target=FunctionTarget(setup_review_board))` | NestedChat (RedundantPattern) | Function builds N reviewer agents from `ProfileBoard`, constructs RedundantPattern with Chair as aggregator, returns `NestedChatTarget`. See §4.4. |
+| Reviewer Ri | implicit (RedundantPattern siblings → aggregator) | Chair | Pattern-internal; not a Default-Pattern handoff. |
+| Chair | (no handoff — terminal node) | — | Chair's structured `BoardReport` response terminates the chat. |
 
 `AfterWork` is unconditional: fires after the source agent's full turn (including any tool calls and the final structured response) completes. We do not use `OnCondition` since none of these handoffs are conditional on response content — Pydantic validation already gates "did the agent succeed."
 
@@ -330,8 +351,9 @@ paperfb/
 │   ├── classification.py        # build_classification_agent(...)
 │   ├── profile_creation.py      # build_profile_creation_agent(...)
 │   ├── reviewer.py              # build_reviewer_agent(profile, ...) factory
-│   └── chair.py                 # build_chair(...) + build_tool_executor(...);
-│                                # convene_review_board, assemble_board_report
+│   └── chair.py                 # build_chair(...) — aggregator inside RedundantPattern
+├── handoffs.py                  # NEW; classify_to_profile, setup_review_board
+│                                # FunctionTarget bodies
 └── tools/
     ├── acm_lookup.py            # lookup_acm tool fn
     └── sampler.py               # sample_board tool fn (deterministic)
@@ -388,7 +410,7 @@ The refactor is large enough that an in-place rewrite without a working pipeline
 2. Move `sample_board` and `lookup_acm` into `paperfb/tools/` with Pydantic-typed I/O.
 3. Build Classification agent (module + builder + handoff stub) + integration test against mocked AG2 LLM.
 4. Build ProfileCreation agent + integration test.
-5. Build reviewer factory + Chair (LLM decider) + Tool Executor agent + `convene_review_board` and `assemble_board_report` tools (the latter wraps RedundantPattern construction) + integration test.
+5. Build reviewer factory + Chair aggregator + `setup_review_board` FunctionTarget that constructs the RedundantPattern from `ProfileBoard` and returns a `NestedChatTarget` + integration test.
 6. Wire the full pipeline in `paperfb/pipeline.py` with `UserProxyAgent` entry; replace `paperfb/orchestrator.py` and `paperfb/llm_client.py`.
 7. Update renderer to `BoardReport`; delete `reviews/*.json` runtime path.
 8. Update CLI in `paperfb/main.py`.
@@ -398,11 +420,13 @@ The refactor is large enough that an in-place rewrite without a working pipeline
 
 ## 11. Open questions
 
-- **AG2 `response_format` semantics across providers.** Expected to work per AG2 docs for the OpenAI-compatible path through the course proxy, including Claude Haiku, GPT-4.1-mini, Gemini Flash. Verify smoke-test in Step 3 of the migration plan; if a model fails, fall back to AG2's function-calling-based JSON schema adapter for that model only. No design impact.
+(none blocking design; all items below are resolved or downgraded to smoke-tests)
 
 Resolved during this design pass:
 
-- **Carryover shape between handoffs.** AG2 supports sub-field extraction via `FunctionTarget` + `FunctionTargetResult`. The handoff function receives the previous agent's output as a string, can parse it into a Pydantic model, write to shared `ContextVariables` (hidden from LLMs), and emit a curated `message` for the next agent. Used between Classification and ProfileCreation to extract `result.classes` and stash `acm_classes` in context. See §6.2.
-- **RedundantPattern aggregator shape.** Per AG2 docs, the aggregator in the documented pattern is a `ConversableAgent` paired with a function for evaluation. We adopt the same shape: Chair (LLM decider) + Tool Executor (no LLM) + two deterministic Python tools that own the actual work. See §4.4.
-- **Reviewer isolation.** RedundantPattern places each sibling in its own nested chat seeing only the task message, mediated by `extract_task_message`. No additional wrapping needed. See §4.3, §4.4.
+- **`response_format` across course models.** AG2 natively supports `response_format=PydanticModel` for OpenAI, Anthropic, Google Gemini, and Ollama clients ([AG2 Structured Outputs](https://docs.ag2.ai/latest/docs/user-guide/basic-concepts/structured-outputs/)). Our setup uses `api_type: "openai"` against the course proxy, so AG2 sends a plain OpenAI-shaped `response_format` payload regardless of underlying model; the proxy (OpenRouter) then translates per-provider. Schema constraints we adopt to stay portable: every Pydantic root model defines a `title`, every model sets `model_config = {"extra": "forbid"}` (works around [Gemini's `additionalProperties` issue](https://github.com/ag2ai/ag2/issues/2348)), and schemas are kept OpenAPI-compliant (no `Union[Literal[...], None]` chains, etc.). Smoke-test each course model in migration Step 3; if any fail, fall back to AG2's function-calling-based JSON-schema adapter for that one model. No design impact.
+- **Carryover shape between handoffs.** AG2 supports sub-field extraction via `FunctionTarget` + `FunctionTargetResult`. The handoff function receives the previous agent's output as a string, can parse it into a Pydantic model, write to shared `ContextVariables` (hidden from LLMs), and emit a curated `message` for the next agent — or transition to a `NestedChatTarget`. Used twice: classify→profile (sub-field extraction) and profile→reviewer-board (runtime agent construction). See §4.4 and §6.2.
+- **RedundantPattern aggregator shape.** Per AG2 docs, the aggregator in the documented pattern is a `ConversableAgent`. Chair adopts that role: a thin LLM agent with `response_format=BoardReport` that collates verbatim. See §4.4.
+- **Runtime reviewer instantiation.** Lives in a `FunctionTarget` (`setup_review_board`) on ProfileCreation's handoff, which builds N reviewer `ConversableAgent`s from the parsed `ProfileBoard` and returns a `NestedChatTarget` for the constructed RedundantPattern. No tool dispatch and no extra LLM call needed for setup. See §4.4.
+- **Reviewer isolation.** RedundantPattern places each sibling in its own nested chat seeing only the task message (the manuscript), mediated by `extract_task_message`. ACM context does not flow to reviewers — specialty is already in the persona prompt. See §4.3.
 - **Handoff timing.** `AfterWork` and `OnCondition` both fire after the source agent's full turn (including tool calls and final structured response) completes. We use `AfterWork` for unconditional sequential handoffs since none of our edges depend on response content. See §6.2.
