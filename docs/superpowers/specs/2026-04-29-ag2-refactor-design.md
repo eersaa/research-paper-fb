@@ -36,7 +36,7 @@ UserProxyAgent (human_input_mode="NEVER";
 └─────────────────────────┘
         │ AfterWork → FunctionTarget(classify_to_profile):
         │   parses ClassificationResult
-        │   writes context_variables["acm_classes"]
+        │   writes context_variables["classification"] (full result)
         │   forwards a curated, classes-only message to ProfileCreation
         ▼
 ┌─────────────────────────┐  tool: sample_board  (executed by UserProxy)
@@ -60,16 +60,21 @@ UserProxyAgent (human_input_mode="NEVER";
 │      └─────┴───────────────┘                               │
 │                  ▼                                         │
 │           ┌────────────┐                                   │ Chair:
-│           │   Chair    │  pure aggregator; bundles N       │   response_format=BoardReport,
-│           │ (aggregator)│ Reviews + classification + skipped│  no LLM reasoning beyond
-│           └────────────┘                                   │   collation
-└────────────────────────────────────────────────────────────┘
+│           │   Chair    │  collates slim Reviews + skipped  │   response_format=BoardReport
+│           │ (aggregator)│ into BoardReport. No metadata    │   (slim: reviews+skipped),
+│           └────────────┘  joining; renderer does that.     │   no LLM reasoning beyond
+└────────────────────────────────────────────────────────────┘   collation
                   │
                   ▼
-              BoardReport
+              BoardReport (slim: reviews + skipped)
                   │
                   ▼
-           Renderer (pure code)
+       pipeline.run() assembles RunOutput
+       (= classification + profiles + board)
+       from context_variables + nested chat result
+                  │
+                  ▼
+           Renderer (pure code; joins reviews ↔ profiles by reviewer_id)
                   │
                   ▼
             final_report.md
@@ -91,7 +96,7 @@ UserProxyAgent (human_input_mode="NEVER";
 ### 2.2 What disappears
 
 - `paperfb/llm_client.py` — replaced by AG2's `llm_config` and built-in retries.
-- `paperfb/orchestrator.py` — shrinks to a thin `pipeline.py` that builds agents, registers handoffs, runs the chat, and hands the resulting `BoardReport` to the renderer.
+- `paperfb/orchestrator.py` — shrinks to a thin `pipeline.py` that builds agents, registers handoffs, runs the chat, assembles `RunOutput` from `context_variables` + the nested chat's `BoardReport`, and hands `RunOutput` to the renderer.
 - `paperfb/agents/*/agent.py` — hand-rolled tool-call loops; AG2 owns this now.
 - `paperfb/agents/reviewer/tools.py` (`write_review`) — replaced by reviewer's structured Pydantic output. Per-reviewer JSON files no longer written by the runtime pipeline.
 - Manual JSON validation in `paperfb/contracts.py` — Pydantic does it.
@@ -101,7 +106,7 @@ UserProxyAgent (human_input_mode="NEVER";
 
 - `data/acm_ccs.json`, `data/finnish_names.json`, `config/*.yaml`, `samples/`.
 - `scripts/build_acm_ccs.py`, `scripts/build_finnish_names.py`.
-- The renderer (now consumes `BoardReport` directly instead of reading per-reviewer JSON files).
+- The renderer (now consumes `RunOutput` in-memory instead of reading per-reviewer JSON files).
 - The deterministic sampler logic — relocated under `paperfb/tools/sampler.py` and exposed as the `sample_board` tool.
 - `lookup_acm` lookup logic — relocated under `paperfb/tools/acm_lookup.py`.
 - The non-leakage property: AG2 routes through the same OpenAI-compatible proxy via `llm_config.base_url`. No additional egress.
@@ -110,9 +115,19 @@ UserProxyAgent (human_input_mode="NEVER";
 
 All cross-agent messages and structured tool outputs use Pydantic. This module replaces `paperfb/contracts.py`.
 
+**Portability rules (per §5.1) — applied to every model below, shown explicitly on `CCSClass` for example, omitted from the rest of the listing for brevity:**
+
+```python
+class CCSClass(BaseModel):
+    model_config = ConfigDict(title="CCSClass", extra="forbid")
+    ...
+```
+
+i.e. every `BaseModel` subclass sets `model_config = ConfigDict(title="<ClassName>", extra="forbid")`. This satisfies the OpenAPI `title` requirement and works around [Gemini's `additionalProperties` issue](https://github.com/ag2ai/ag2/issues/2348).
+
 ```python
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # Classification ────────────────────────────────────────────────────
 
@@ -151,15 +166,13 @@ class ProfileBoard(BaseModel):
     reviewers: list[ReviewerProfile]
 
 # Reviewer ──────────────────────────────────────────────────────────
+# Slim: review *content* only. Reviewer-identity metadata stays on
+# ReviewerProfile and is joined back in by the renderer (§6.6) via
+# reviewer_id. This eliminates metadata-echo waste and hallucination
+# risk — see §4.3.
 
 class Review(BaseModel):
-    reviewer_id: str
-    reviewer_name: str
-    specialty: str
-    stance: str
-    primary_focus: str
-    secondary_focus: str | None
-    profile_summary: str
+    reviewer_id: str               # join key — must match a ReviewerProfile.id
     strong_aspects: str
     weak_aspects: str
     recommended_changes: str
@@ -171,9 +184,19 @@ class SkippedReviewer(BaseModel):
     reason: str
 
 class BoardReport(BaseModel):
-    classification: ClassificationResult
+    """Chair's structured output. No classification, no profile metadata —
+    those are joined back in by pipeline.run() and the renderer."""
     reviews: list[Review]
     skipped: list[SkippedReviewer]
+
+# Top-level run output ──────────────────────────────────────────────
+# Assembled by pipeline.run() AFTER the chat completes. Renderer and
+# Judge consume this. RunOutput is the on-disk shape (evaluations/run-<ts>/run.json).
+
+class RunOutput(BaseModel):
+    classification: ClassificationResult
+    profiles: ProfileBoard
+    board: BoardReport
 ```
 
 ## 4. Per-agent specifications
@@ -185,14 +208,14 @@ class BoardReport(BaseModel):
 - **System prompt outline:** ACM CCS rules (prefer leaf nodes, 2–5 classes with High/Medium/Low weights), two-phase loop (extract paper-stated or synthesised keywords first, then drive `lookup_acm` queries), keywords are logged but do not propagate downstream.
 - **Tool:** `lookup_acm(query: str, k: int = 10) -> list[CCSMatch]`. Multiple calls allowed within the loop.
 - **Structured output:** `response_format=ClassificationResult`.
-- **Handoff:** `AfterWork(target=FunctionTarget(classify_to_profile))`. The function extracts `result.classes`, writes them to `context_variables["acm_classes"]`, and forwards a curated message (e.g. `"ACM classes: [<paths>]"`) to ProfileCreation. `result.keywords` stays in the chat transcript and the run log but does not enter ProfileCreation's prompt.
+- **Handoff:** `AfterWork(target=FunctionTarget(classify_to_profile))`. The function parses the full `ClassificationResult`, writes it to `context_variables["classification"]` (so the renderer can read keywords + classes after the chat completes), and forwards a curated, classes-only message (e.g. `"ACM classes: [<paths>]"`) to ProfileCreation. `result.keywords` is preserved in `context_variables` and the run log but does NOT enter ProfileCreation's prompt or any downstream agent's prompt.
 
 ### 4.2 ProfileCreation Agent
 
 - **Module:** `paperfb/agents/profile_creation.py`
 - **Builder:** `build_profile_creation_agent(llm_config, axes, names_path, count, core_focuses, seed) -> ConversableAgent`
 - **System prompt outline:** explains the persona formula (`name + specialty + stance + primary_focus + secondary_focus`), splices in the axis-vocabulary descriptions verbatim from `config/axes.yaml`, instructs the agent to call `sample_board` exactly once and then emit `ProfileBoard` with one `ReviewerProfile` per sampled tuple.
-- **Tool:** `sample_board(n, classes, stances, focuses, core_focuses, seed) -> list[ReviewerTuple]` — deterministic Python, returns Pydantic models. Wraps the existing sampler under `paperfb/tools/sampler.py`.
+- **Tool:** `sample_board(n: int, classes: list[CCSClass], seed: int | None = None) -> list[ReviewerTuple]`. Deterministic Python; wraps the existing sampler under `paperfb/tools/sampler.py`. Config-derived parameters (`stances`, `focuses`, `core_focuses`, `enable_secondary`, `names_path`) are **closure-bound** at tool-registration time inside `build_profile_creation_agent` — the LLM does not see or supply them. This minimises the LLM's parameter surface (only `n`, `classes`, optional `seed`) and prevents the agent from inventing axis vocabularies.
 - **Persona generation strategy:** single LLM step producing all N personas at once via structured output. Each `ReviewerProfile.persona_prompt` is a full system message — embeds the assigned Finnish given name, specialty grounding, stance description, primary/secondary focus rubric language. (Per-tuple sub-loops are YAGNI.)
 - **Structured output:** `response_format=ProfileBoard`.
 - **Handoff:** `AfterWork(target=FunctionTarget(setup_review_board))`. The function parses `ProfileBoard`, builds N reviewer `ConversableAgent`s via `build_reviewer_agent` (§4.3), constructs a `RedundantPattern(agents=reviewers, aggregator=chair, task=context_variables["manuscript"])`, and returns `FunctionTargetResult(target=NestedChatTarget(redundant_pattern))`. Runtime agent construction happens here, in plain Python, at the canonical AG2 boundary for "build downstream agents from upstream structured output." See §4.4 for the function body.
@@ -201,10 +224,10 @@ class BoardReport(BaseModel):
 
 - **Factory:** `build_reviewer_agent(profile: ReviewerProfile, llm_config) -> ConversableAgent`.
 - **Constructed by:** `setup_review_board` FunctionTarget (§4.4) at runtime, one per `ReviewerProfile`.
-- **System prompt:** `profile.persona_prompt` verbatim. ProfileCreation has already embedded the assigned name, ACM specialty, stance description, primary/secondary focus rubric language. Nothing else is layered on.
+- **System prompt:** `profile.persona_prompt` verbatim, plus a single appended line `"Your reviewer_id is: <profile.id>. Use this exact value as Review.reviewer_id."` so the agent knows the join key without reproducing other metadata. ProfileCreation has already embedded the assigned name, ACM specialty, stance description, primary/secondary focus rubric language inside `persona_prompt`.
 - **Input received per nested chat:** the manuscript text as the redundant-task message. That is all. ACM classification context does **not** flow to reviewers — the specialty (an ACM class path) is already part of the persona prompt.
 - **No tools.** Pydantic structured output replaces the previous `write_review` tool.
-- **Structured output:** `response_format=Review`.
+- **Structured output:** `response_format=Review` — the slim form (§3): `{reviewer_id, strong_aspects, weak_aspects, recommended_changes}`. Identity metadata (name, stance, focus, specialty) is owned by `ReviewerProfile` and joined back in by the renderer (§6.6) via `reviewer_id`. The reviewer agent never echoes its own metadata.
 - **Turn limit:** `max_consecutive_auto_reply=1`. Reviewers respond once and are done.
 - **Isolation:** RedundantPattern places each reviewer in its own nested chat. Siblings cannot see each other; the broader orchestration transcript is hidden. Only the manuscript reaches them, mediated by `extract_task_message`.
 
@@ -217,35 +240,40 @@ def setup_review_board(
     agent_output: str,
     context_variables: ContextVariables,
 ) -> FunctionTargetResult:
+    """Closure: captures llm_configs and expected_ids at pipeline-build time."""
     board = ProfileBoard.model_validate_json(agent_output)
+    expected_ids = {p.id for p in board.reviewers}
     reviewers = [
         build_reviewer_agent(p, reviewer_llm_config)
         for p in board.reviewers
     ]
-    chair = build_chair(chair_llm_config)  # aggregator
+    chair = build_chair(chair_llm_config)
     pattern = RedundantPattern(
         agents=reviewers,
         aggregator=chair,
         task=context_variables["manuscript"],
-        # extract_task_message: each reviewer sees only the manuscript
     )
-    context_variables["profiles"] = board.model_dump()  # for renderer header
+    context_variables["profiles"] = board.model_dump()
+    context_variables["expected_reviewer_ids"] = sorted(expected_ids)
+    context_variables.setdefault("skipped", [])
     return FunctionTargetResult(
         target=NestedChatTarget(pattern.as_nested_chat()),
         context_variables=context_variables,
     )
 ```
 
-(Final API names — `RedundantPattern` constructor signature, `as_nested_chat()` form — to be confirmed against the AG2 version pinned at implementation time. The shape is fixed; the surface may shift.)
+(Final API names — `RedundantPattern` constructor signature, `as_nested_chat()` form — to be confirmed against AG2 0.12.1 at implementation time. The shape is fixed; the surface may shift.)
+
+**Reviewer-failure detection:** RedundantPattern siblings can fail in two ways: (a) Pydantic validation fails on the agent's structured output after the configured retry, (b) the underlying LLM call raises after retries. AG2 reports per-sibling status on the pattern's result. The implementation pass MUST verify the exact API but the contract is: after the nested chat completes, *Chair's system prompt directs it to* read the sibling chat history, identify which `expected_reviewer_ids` did not produce a valid `Review`, and write `SkippedReviewer(id=..., reason=...)` entries to `context_variables["skipped"]`. Chair sees the sibling failures because it runs as the aggregator inside the same nested chat. If a more reliable AG2 hook surfaces (e.g. `pattern.failed_agents`), `setup_review_board` can populate `skipped` deterministically before Chair runs and Chair becomes a pure passthrough.
 
 **Chair Agent (aggregator inside RedundantPattern):**
 
 - **Module:** `paperfb/agents/chair.py`
 - **Builder:** `build_chair(llm_config) -> ConversableAgent`
-- **Role:** receives the `Review` objects emitted by the redundant siblings, plus the upstream `ClassificationResult` (read from `context_variables["acm_classes"]`) and any `SkippedReviewer` entries (read from `context_variables["skipped"]`). Emits `BoardReport` as its structured response. No reasoning, no synthesis — collation only.
-- **System prompt:** one paragraph instructing Chair to assemble the per-reviewer reviews verbatim into a `BoardReport`, preserving every field; no editing, no merging, no commentary.
-- **Structured output:** `response_format=BoardReport`.
-- **Why an LLM agent and not a deterministic callable.** AG2's documented RedundantPattern uses an LLM `ConversableAgent` aggregator (e.g. `evaluator_agent` calling `evaluate_and_select`). Following that idiom keeps us inside the framework's documented surface. Cost is one cheap LLM call. If a future AG2 version exposes a deterministic-callable aggregator hook on `RedundantPattern`, Chair can be swapped for it without changing any other agent.
+- **Role:** receives the slim `Review` objects emitted by the redundant siblings (in chat history), reads `context_variables["expected_reviewer_ids"]` and `context_variables["skipped"]`, and emits `BoardReport(reviews=[...], skipped=[...])` as its structured response. **No metadata joining** — that's the renderer's job. **No classification** — that's pipeline.run()'s job (read from `context_variables["classification"]` and bundled into `RunOutput`).
+- **System prompt:** one paragraph instructing Chair to (1) collect every valid `Review` it sees from the siblings, (2) for any `expected_reviewer_id` whose Review is missing or malformed, append a `SkippedReviewer(id, reason="missing or invalid Review")` entry to `BoardReport.skipped`, (3) emit `BoardReport`. No editing, no synthesis, no commentary.
+- **Structured output:** `response_format=BoardReport` (slim — see §3).
+- **Why an LLM agent and not a deterministic callable.** AG2's documented RedundantPattern uses an LLM `ConversableAgent` aggregator. Following that idiom keeps us inside the framework's documented surface. Cost is one cheap LLM call. If a future AG2 version exposes a deterministic-callable aggregator hook on `RedundantPattern`, Chair can be swapped without changing any other agent.
 
 ## 5. Configuration
 
@@ -300,19 +328,60 @@ If a future requirement re-introduces Claude as a structured-output agent, the i
 
 ## 6. Cross-cutting concerns
 
-### 6.1 User entry
+### 6.1 User entry, tool-executor wiring, and post-chat assembly
 
 ```python
+# Single UserProxyAgent serves dual role: chat initiator + tool executor.
 user_proxy = UserProxyAgent(
     name="user",
     human_input_mode="NEVER",
     code_execution_config=False,
 )
-result = user_proxy.initiate_chat(group_chat_manager, message=manuscript_text)
-board_report: BoardReport = result.summary  # or extracted from chat history
+
+# Tool registration: the calling agent declares the tool to its LLM
+# (register_for_llm); the user_proxy is the *executor* that actually runs it
+# (register_for_execution). Same UserProxy instance used for both linear-leg tools.
+classification_agent = build_classification_agent(...)
+profile_creation_agent = build_profile_creation_agent(...)
+
+@user_proxy.register_for_execution()
+@classification_agent.register_for_llm(name="lookup_acm", description="...")
+def lookup_acm(query: str, k: int = 10) -> list[CCSMatch]: ...
+
+@user_proxy.register_for_execution()
+@profile_creation_agent.register_for_llm(name="sample_board", description="...")
+def sample_board(n: int, classes: list[CCSClass], seed: int | None = None) -> list[ReviewerTuple]:
+    # closure-bound: stances, focuses, core_focuses, enable_secondary, names_path
+    ...
+
+# Run the chat. Manuscript is the initiating message and gets stashed for
+# downstream FunctionTargets via initial context_variables.
+ts = utc_timestamp()  # used by both logger (§6.5) and renderer output dir (§6.6)
+chat_result = user_proxy.initiate_chat(
+    group_chat_manager,
+    message=manuscript_text,
+    context_variables={"manuscript": manuscript_text, "run_id": ts},
+)
+
+# Post-chat assembly. Outer GroupChat terminates after the nested
+# RedundantPattern returns (no further AfterWork registered after
+# setup_review_board's NestedChatTarget — see §6.2). pipeline.run() now
+# reads everything from context_variables + the nested chat result.
+ctx = chat_result.context_variables
+classification = ClassificationResult.model_validate(ctx["classification"])
+profiles       = ProfileBoard.model_validate(ctx["profiles"])
+board_report   = extract_board_report(chat_result)  # last message of nested chat,
+                                                    # parsed via Pydantic
+run = RunOutput(classification=classification, profiles=profiles, board=board_report)
+
+# Renderer + on-disk artefact
+final_md = render_report(run)
+write_run_output(run, ts)  # evaluations/run-<ts>/run.json for Judge
 ```
 
-The manuscript is the initiating message. It travels only through the proxied conversation; non-leakage preserved.
+The manuscript is the initiating message and is also stashed in `context_variables["manuscript"]` so the `setup_review_board` `FunctionTarget` can pass it as the redundant-pattern task. It travels only through the proxied conversation; non-leakage preserved (§6.7).
+
+`extract_board_report` reads the nested chat's last message (Chair's structured response) and parses it as `BoardReport`. Final API path (`chat_result.nested_chat_results`, `chat_result.chat_history`, etc.) is to be confirmed against AG2 0.12.1 at implementation time.
 
 ### 6.2 Handoff topology
 
@@ -321,10 +390,11 @@ Default Pattern handoffs encoded on each agent at construction time:
 | From | Handoff | To | Notes |
 | --- | --- | --- | --- |
 | (UserProxy entry) | `initiate_chat(message=manuscript_text)` | Classification | UserProxy also stashes the manuscript in `context_variables["manuscript"]` for downstream `FunctionTarget`s to read. |
-| Classification | `AfterWork(target=FunctionTarget(classify_to_profile))` | ProfileCreation | Function extracts `result.classes`, writes `context_variables["acm_classes"]`, forwards a curated message. Keywords stay in transcript only. |
+| Classification | `AfterWork(target=FunctionTarget(classify_to_profile))` | ProfileCreation | Function parses the full `ClassificationResult`, writes it to `context_variables["classification"]` (so the renderer can read keywords + classes after the chat completes), forwards a curated, classes-only message to ProfileCreation. |
 | ProfileCreation | `AfterWork(target=FunctionTarget(setup_review_board))` | NestedChat (RedundantPattern) | Function builds N reviewer agents from `ProfileBoard`, constructs RedundantPattern with Chair as aggregator, returns `NestedChatTarget`. See §4.4. |
 | Reviewer Ri | implicit (RedundantPattern siblings → aggregator) | Chair | Pattern-internal; not a Default-Pattern handoff. |
-| Chair | (no handoff — terminal node) | — | Chair's structured `BoardReport` response terminates the chat. |
+| Chair | (no handoff — terminal node of nested chat) | — | Chair's structured `BoardReport` response terminates the *nested* RedundantPattern chat. |
+| (post-nested) | (no further outer handoff registered) | — | The outer Default-Pattern chat has nothing to do after the `NestedChatTarget` returns. The outer chat terminates. `pipeline.run()` then assembles `RunOutput` from `context_variables` + the nested chat's final message — see §6.1. |
 
 `AfterWork` is unconditional: fires after the source agent's full turn (including any tool calls and the final structured response) completes. We do not use `OnCondition` since none of these handoffs are conditional on response content — Pydantic validation already gates "did the agent succeed."
 
@@ -332,7 +402,7 @@ Default Pattern handoffs encoded on each agent at construction time:
 
 - **Classification fails** (no classes returned, repeated tool errors, exhausted retries): abort run, non-zero exit, no report written.
 - **ProfileCreation fails** (validation failure on `ProfileBoard`, sampler exception): abort run.
-- **Reviewer fails** (validation failure on `Review`, exception inside the sibling chat): caught at the sibling level, recorded as `SkippedReviewer(id=..., reason=...)`, run continues. Renderer notes the skip.
+- **Reviewer fails** (validation failure on `Review`, exception inside the sibling chat): the sibling does not produce a valid `Review`. Chair (per its system prompt, §4.4) detects the missing `reviewer_id` against `context_variables["expected_reviewer_ids"]` and emits a `SkippedReviewer(id=..., reason=...)` entry in `BoardReport.skipped`. Run continues; renderer notes the skip. If AG2 surfaces a per-sibling failure hook on `RedundantPattern`, `setup_review_board` populates `skipped` deterministically before Chair runs and Chair becomes a pure passthrough.
 - **Pydantic validation error on a structured response:** AG2 retry-with-validator-feedback (1 retry, configured via `ag2.retry_on_validation_error`); on second failure the agent's branch fails per the rules above.
 - **Tool errors:** `lookup_acm` raises `ValueError` on bad input; AG2 surfaces it back to the calling agent which may retry. `sample_board` raises if `len(names) < n` (preserves existing invariant from `data/finnish_names.json`).
 
@@ -342,19 +412,19 @@ RedundantPattern is implemented on top of GroupChat, which is turn-based. Review
 
 ### 6.5 Logging
 
-Register an AG2 logging hook that writes JSONL to `logs/run-<ts>.jsonl`. Each line records: timestamp, agent name, role, content (or content-hash for manuscript-bearing messages), tool calls, and `usage` (tokens, cost). Replaces `LLMClient` logging. Used by Wave 2 cost reporting.
+Register an AG2 logging hook that writes JSONL to `logs/run-<ts>.jsonl`. The `<ts>` is the same UTC timestamp generated once in `pipeline.run()` (§6.1) and reused by the renderer for its on-disk output (`evaluations/run-<ts>/run.json`, §6.6) — the two artefacts share a run-id for correlation. Each line records: timestamp, agent name, role, content (subject to the size-threshold filter described in §6.7 — payloads >1024 bytes are stored as a SHA-256 content-hash + byte length, not cleartext), tool calls, and `usage` (tokens, cost). Replaces `LLMClient` logging. Used by Wave 2 cost reporting.
 
 ### 6.6 Renderer
 
 `paperfb/renderer.py` becomes:
 
 ```python
-def render_report(board: BoardReport) -> str: ...
+def render_report(run: RunOutput) -> str: ...
 ```
 
-Reads the in-memory `BoardReport` directly. Produces markdown with the same shape as today: header (assigned ACM classes), per-reviewer sections (`## Review by {name} — {specialty}`), three labelled subsections (Strong / Weak / Recommended), skipped-reviewer note if any.
+Reads the in-memory `RunOutput`. Joins each `Review` with its corresponding `ReviewerProfile` (via `reviewer_id` → `profile.id`) to render header + per-reviewer sections. Produces markdown with the same shape as today: header (assigned ACM classes from `run.classification.classes`), per-reviewer sections (`## Review by {profile.name} — {profile.specialty}`), three labelled subsections (Strong / Weak / Recommended), skipped-reviewer note from `run.board.skipped` if any.
 
-The runtime no longer writes per-reviewer JSON files. The renderer additionally writes a serialised `BoardReport` to `evaluations/run-<ts>/board.json` for the Judge to consume in Wave 2.
+`pipeline.run()` separately writes the serialised `RunOutput` to `evaluations/run-<ts>/run.json` (same `<ts>` as the JSONL log, §6.5) — the canonical on-disk artefact consumed by the Wave 2 Judge (§8). The runtime no longer writes per-reviewer JSON files.
 
 ### 6.7 Manuscript transport
 
@@ -369,7 +439,7 @@ paperfb/
 ├── config.py                    # unchanged
 ├── schemas.py                   # NEW; replaces contracts.py — all Pydantic models
 ├── pipeline.py                  # NEW; ~80 lines: builds agents + handoffs, runs chat
-├── renderer.py                  # signature change: render_report(board: BoardReport)
+├── renderer.py                  # signature change: render_report(run: RunOutput)
 ├── agents/
 │   ├── classification.py        # build_classification_agent(...)
 │   ├── profile_creation.py      # build_profile_creation_agent(...)
@@ -381,7 +451,7 @@ paperfb/
     ├── acm_lookup.py            # lookup_acm tool fn
     └── sampler.py               # sample_board tool fn (deterministic)
 scripts/
-├── judge.py                     # rewritten: consumes BoardReport JSON file
+├── judge.py                     # rewritten: consumes RunOutput JSON file
 ├── build_acm_ccs.py             # unchanged
 └── build_finnish_names.py       # unchanged
 ```
@@ -392,10 +462,10 @@ scripts/
 
 Judge becomes an AG2 setup:
 
-- `JudgeAgent` (`response_format=JudgeScore`) iterates per `Review` in a `BoardReport` JSON file.
-- `scripts/judge.py` reads `evaluations/run-<ts>/board.json` produced by the renderer, runs the `JudgeAgent` once per review, writes `evaluations/run-<ts>/judge.json` with per-dimension scores + per-reviewer mean + board mean (current shape preserved).
+- `JudgeAgent` (`response_format=JudgeScore`) iterates per `Review` in `run.board.reviews`, joining with the matching `ReviewerProfile` from `run.profiles` via `reviewer_id` so the judge sees the persona context for fidelity scoring.
+- `scripts/judge.py` reads `evaluations/run-<ts>/run.json` (the `RunOutput` artefact written by `pipeline.run()`, §6.6), runs the `JudgeAgent` once per review, writes `evaluations/run-<ts>/judge.json` with per-dimension scores + per-reviewer mean + board mean (current shape preserved).
 - Same Pydantic discipline: `JudgeScore` defined in `paperfb/schemas.py`.
-- Judge model defaults to a different family than reviewers (current bias-mitigation rule preserved).
+- Judge model defaults to a different family than reviewers (current bias-mitigation rule preserved — see §5).
 
 Detailed `JudgeScore` schema and prompt deferred to its own design pass.
 
@@ -404,26 +474,30 @@ Detailed `JudgeScore` schema and prompt deferred to its own design pass.
 - **Unit:**
   - `sample_board` tool: diversity invariants — `(stance, primary_focus)` unique across reviewers; core focuses covered when `N >= len(core_focuses)`; Finnish names unique.
   - `lookup_acm` tool: deterministic ranking, multi-token AND with parent-path bonus (preserves existing behaviour).
-  - Renderer: pure function, golden-output test on fixture `BoardReport`.
-  - Pydantic schemas: validation error cases (bad weight value, missing fields).
+  - Renderer: pure function, golden-output test on fixture `RunOutput` (covers the `reviewer_id` ↔ `ReviewerProfile` join logic).
+  - Pydantic schemas: validation error cases (bad weight value, missing fields, slim `Review` shape, `RunOutput` round-trip).
 - **Integration with stubbed LLM:**
   - Pipeline end-to-end with AG2's mocked-LLM facilities (or monkeypatched OpenAI client).
   - Asserts the handoff sequence (Classification → ProfileCreation → Redundant → Chair).
   - Asserts RedundantPattern emits exactly N reviews when all succeed.
   - Asserts skipped-reviewer path: stub one reviewer to raise; assert `BoardReport.skipped` length 1, `BoardReport.reviews` length N-1.
+  - Asserts `context_variables` propagates from outer chat into the nested RedundantPattern (Chair can read `expected_reviewer_ids` and `skipped`).
+  - Asserts `pipeline.run()` builds a valid `RunOutput` from `context_variables["classification"]` + `context_variables["profiles"]` + the nested chat result.
 - **Acceptance (`@pytest.mark.slow`):**
   - Live proxy end-to-end on a tiny manuscript fixture.
-  - Asserts: `final_report.md` exists, per-reviewer sections match N, ACM classes present, distinct stances/focuses per diversity rule, distinct Finnish names, no manuscript leakage to stdout or logs.
+  - Asserts: `final_report.md` exists, `evaluations/run-<ts>/run.json` exists and round-trips through `RunOutput`, per-reviewer sections match N, ACM classes present, distinct stances/focuses per diversity rule, distinct Finnish names, no manuscript leakage to stdout or logs.
 
 Existing test files to be migrated:
 
 - `tests/test_orchestrator.py` → `tests/test_pipeline.py` (rewritten against AG2 mocked LLM).
 - `tests/test_llm_client.py` → deleted (no `LLMClient` to test).
-- `tests/test_contracts.py` → `tests/test_schemas.py` (Pydantic validation cases).
-- `tests/agents/{classification,profile_creation,reviewer}/test_agent.py` → deleted; replaced by integration tests on the new pipeline. Tool-level tests under `tests/tools/test_acm_lookup.py` and `tests/tools/test_sampler.py` remain.
-- `tests/test_renderer.py` → updated to `BoardReport` input shape.
-- `tests/test_judge.py` → updated to consume `evaluations/run-<ts>/board.json` instead of per-reviewer files.
-- `tests/test_acceptance_live.py` → updated assertions (no per-reviewer JSON files).
+- `tests/test_contracts.py` → `tests/test_schemas.py` (Pydantic validation cases for the §3 schemas, including `RunOutput`).
+- `tests/agents/profile_creation/test_sampler.py` → `tests/tools/test_sampler.py`.
+- `tests/agents/classification/test_tools.py` → `tests/tools/test_acm_lookup.py`.
+- `tests/agents/{classification,profile_creation,reviewer}/test_agent.py` → deleted; replaced by integration tests on the new pipeline.
+- `tests/test_renderer.py` → updated to `RunOutput` input shape; covers profile-join via `reviewer_id`.
+- `tests/test_judge.py` → updated to consume `evaluations/run-<ts>/run.json`.
+- `tests/test_acceptance_live.py` → updated assertions (no per-reviewer JSON files; assert `RunOutput` artefact instead).
 
 ## 10. Migration plan (high-level; a detailed plan is the next deliverable via `writing-plans`)
 
@@ -433,17 +507,22 @@ Existing test files to be migrated:
 
 The implementation plan (separate document) will sequence the refactor as:
 
-1. Add AG2 dependency, scaffold `paperfb/schemas.py` with all Pydantic models and tests for them.
-2. Move `sample_board` and `lookup_acm` into `paperfb/tools/` with Pydantic-typed I/O.
-3. Build Classification agent (module + builder + handoff stub) + integration test against mocked AG2 LLM. (No need to re-verify `response_format` per model — already verified in §5.1.)
-4. Build ProfileCreation agent + integration test.
-5. Build reviewer factory + Chair aggregator + `setup_review_board` FunctionTarget that constructs the RedundantPattern from `ProfileBoard` and returns a `NestedChatTarget` + integration test.
-6. Wire the full pipeline in `paperfb/pipeline.py` with `UserProxyAgent` entry; replace `paperfb/orchestrator.py` and `paperfb/llm_client.py`.
-7. Update renderer to `BoardReport`; delete `reviews/*.json` runtime path.
-8. Update CLI in `paperfb/main.py`.
-9. Update Judge to consume `BoardReport` JSON file.
-10. Delete obsolete files; update README and PLAN.md.
-11. Run live acceptance test; verify final report.
+1. Update `pyproject.toml` to depend on `ag2[openai]==0.12.1` (replacing the direct `openai>=1.50.0` dep). Regenerate `uv.lock` with `uv lock`.
+2. Scaffold `paperfb/schemas.py` with all Pydantic models from §3 (ClassificationResult, ProfileBoard, Review, BoardReport, RunOutput, plus supporting types). All models carry `model_config = ConfigDict(title="<ClassName>", extra="forbid")`. Add unit tests for validation and round-trip. **Defer `JudgeScore`** — added in step 10.
+3. Move `sample_board` and `lookup_acm` into `paperfb/tools/` with Pydantic-typed I/O. Move existing tool tests: `tests/agents/profile_creation/test_sampler.py` → `tests/tools/test_sampler.py`, `tests/agents/classification/test_tools.py` → `tests/tools/test_acm_lookup.py`. Adapt assertions to Pydantic-typed returns.
+4. Build Classification agent (`paperfb/agents/classification.py` + builder) and the `classify_to_profile` FunctionTarget body in `paperfb/handoffs.py`. Integration test against mocked AG2 LLM. (No need to re-verify `response_format` per model — already verified in §5.1.)
+5. Build ProfileCreation agent (`paperfb/agents/profile_creation.py` + builder, with `sample_board` registered as a closure-bound tool). Integration test.
+6. Build reviewer factory (`paperfb/agents/reviewer.py`), Chair aggregator (`paperfb/agents/chair.py`), and the `setup_review_board` FunctionTarget body in `paperfb/handoffs.py`. The FunctionTarget constructs the RedundantPattern from `ProfileBoard` and returns a `NestedChatTarget`. Integration test covering: handoff sequence, RedundantPattern emits N reviews on success, skipped-reviewer path (one stubbed reviewer raises), and verification that nested chat reads outer `context_variables`.
+7. Wire the full pipeline in `paperfb/pipeline.py` with `UserProxyAgent` entry (dual role: chat initiator + tool executor for `lookup_acm` and `sample_board`). Generate run-id timestamp; pass to logger and renderer. Implement `extract_board_report(chat_result) -> BoardReport`. Implement `RunOutput` assembly per §6.1.
+8. Update renderer to `render_report(run: RunOutput) -> str`; implement deterministic profile-join via `reviewer_id`. Delete the per-reviewer `reviews/*.json` runtime path. Add `write_run_output(run, ts)` writing `evaluations/run-<ts>/run.json`.
+9. Update CLI in `paperfb/main.py` to call `pipeline.run()` and pass results through renderer + on-disk writer.
+10. Update Judge: add `JudgeScore` to `paperfb/schemas.py`; rewrite `scripts/judge.py` to consume `evaluations/run-<ts>/run.json` (joining `Review` with `ReviewerProfile` via `reviewer_id` for fidelity scoring); update `tests/test_judge.py` accordingly.
+11. **Deletion sweep.** Remove obsolete files:
+    - `paperfb/llm_client.py`, `paperfb/orchestrator.py`, `paperfb/contracts.py`
+    - `paperfb/agents/classification/` (whole subpackage), `paperfb/agents/profile_creation/`, `paperfb/agents/reviewer/`
+    - `tests/test_llm_client.py`, `tests/test_orchestrator.py`, `tests/test_contracts.py`, `tests/agents/`
+    Update README and PLAN.md to reflect the new architecture; cross-link this design doc.
+12. Run live acceptance test (`pytest -m slow`); verify `final_report.md` and `evaluations/run-<ts>/run.json`.
 
 ## 11. Open questions
 
