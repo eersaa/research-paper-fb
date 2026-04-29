@@ -1,32 +1,49 @@
-import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from paperfb.main import main
+from unittest.mock import MagicMock
+
+from paperfb.schemas import (
+    BoardReport, CCSClass, ClassificationResult, Keywords,
+    ProfileBoard, Review, ReviewerProfile, RunOutput,
+)
 
 
-def test_cli_exits_zero_when_pipeline_succeeds(tmp_path, monkeypatch):
-    manuscript = tmp_path / "ms.md"
-    manuscript.write_text("# Title\n\nAbstract.\n")
-    monkeypatch.setenv("BASE_URL", "http://proxy.invalid")
+def _run_output() -> RunOutput:
+    return RunOutput(
+        classification=ClassificationResult(
+            keywords=Keywords(extracted_from_paper=[], synthesised=[]),
+            classes=[CCSClass(path="A", weight="High", rationale="r")],
+        ),
+        profiles=ProfileBoard(reviewers=[ReviewerProfile(
+            id="r1", name="Aino", specialty="A", stance="critical",
+            primary_focus="methods", secondary_focus=None,
+            persona_prompt="...", profile_summary="...",
+        )]),
+        board=BoardReport(
+            reviews=[Review(reviewer_id="r1", strong_aspects="s",
+                            weak_aspects="w", recommended_changes="c")],
+            skipped=[],
+        ),
+    )
 
-    fake_result = MagicMock()
-    fake_result.report_path = tmp_path / "report.md"
-    fake_result.skipped = []
-    fake_result.reviews = [{"reviewer_id": "r1"}, {"reviewer_id": "r2"}, {"reviewer_id": "r3"}]
 
-    fake_llm = MagicMock()
-    fake_llm.usage_summary.return_value = {"total_tokens": 0, "total_cost_usd": 0.0}
-    with patch("paperfb.main.asyncio.run", return_value=fake_result), \
-         patch("paperfb.main.from_env", return_value=fake_llm):
-        rc = main([
-            str(manuscript),
-            "--output", str(tmp_path / "report.md"),
-            "--reviews-dir", str(tmp_path / "reviews"),
-        ])
+def test_main_calls_pipeline_run_and_returns_zero(tmp_path, monkeypatch):
+    manuscript = tmp_path / "m.md"
+    manuscript.write_text("hello")
+
+    from paperfb import main as main_mod
+
+    fake_run = MagicMock(return_value=_run_output())
+    monkeypatch.setattr(main_mod, "pipeline_run", fake_run)
+
+    rc = main_mod.main([str(manuscript), "--output", str(tmp_path / "report.md")])
     assert rc == 0
+    assert fake_run.called
+    kwargs = fake_run.call_args.kwargs
+    assert kwargs["manuscript"] == "hello"
+    assert kwargs["cfg"].paths.output == str(tmp_path / "report.md")
 
 
-def test_cli_missing_manuscript_errors(tmp_path, monkeypatch):
-    monkeypatch.setenv("BASE_URL", "http://proxy.invalid")
-    rc = main([str(tmp_path / "nope.md")])
+def test_main_returns_nonzero_when_manuscript_missing(tmp_path):
+    from paperfb import main as main_mod
+    rc = main_mod.main([str(tmp_path / "missing.md")])
     assert rc != 0

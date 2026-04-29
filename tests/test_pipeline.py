@@ -80,6 +80,11 @@ def test_pipeline_assembles_runoutput_from_context(cfg, monkeypatch):
     written = RunOutput.model_validate_json((matching[-1] / "run.json").read_text())
     assert written == run
 
+    # Rendered markdown report
+    report_path = Path(cfg.paths.output)
+    assert report_path.exists()
+    assert "# Manuscript feedback report" in report_path.read_text()
+
 
 def test_pipeline_propagates_skipped_reviewers(cfg, monkeypatch):
     from paperfb import pipeline as pl

@@ -1,22 +1,25 @@
+"""CLI entry point. Calls paperfb.pipeline.run."""
+from __future__ import annotations
+
 import argparse
-import asyncio
 import sys
 from dataclasses import replace
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 from paperfb.config import load_config
-from paperfb.llm_client import from_env
-from paperfb.orchestrator import run_pipeline
+from paperfb.pipeline import run as pipeline_run
 
 
 def _parse(argv):
-    p = argparse.ArgumentParser(description="Give a manuscript constructive feedback from a board of reviewers.")
+    p = argparse.ArgumentParser(
+        description="Give a manuscript constructive feedback from a board of reviewers."
+    )
     p.add_argument("manuscript", help="Path to manuscript markdown file.")
     p.add_argument("--config", default="config/default.yaml")
     p.add_argument("--axes", default="config/axes.yaml")
     p.add_argument("--output", default=None, help="Override paths.output.")
-    p.add_argument("--reviews-dir", default=None, help="Override paths.reviews_dir.")
     p.add_argument("-n", "--count", type=int, default=None, help="Override reviewers.count.")
     return p.parse_args(argv)
 
@@ -32,25 +35,17 @@ def main(argv=None) -> int:
     manuscript = manuscript_path.read_text()
 
     cfg = load_config(Path(args.config), Path(args.axes))
-    if args.output or args.reviews_dir:
-        cfg = replace(cfg, paths=replace(
-            cfg.paths,
-            output=args.output or cfg.paths.output,
-            reviews_dir=args.reviews_dir or cfg.paths.reviews_dir,
-        ))
+    if args.output:
+        cfg = replace(cfg, paths=replace(cfg.paths, output=args.output))
     if args.count is not None:
         cfg = replace(cfg, reviewers=replace(cfg.reviewers, count=args.count))
 
-    llm = from_env(default_model=cfg.models.default)
-    result = asyncio.run(run_pipeline(manuscript=manuscript, cfg=cfg, llm=llm))
+    run_obj = pipeline_run(manuscript=manuscript, cfg=cfg)
 
-    print(f"Report: {result.report_path}")
-    print(f"Reviews: {len(result.reviews)} produced, {len(result.skipped)} skipped")
-    if result.skipped:
-        for s in result.skipped:
-            print(f"  - skipped {s['id']}: {s['reason']}")
-    usage = llm.usage_summary()
-    print(f"Usage: {usage['total_tokens']} tokens, ~${usage['total_cost_usd']:.4f}")
+    print(f"Report: {cfg.paths.output}")
+    print(f"Reviews: {len(run_obj.board.reviews)} produced, {len(run_obj.board.skipped)} skipped")
+    for s in run_obj.board.skipped:
+        print(f"  - skipped {s.id}: {s.reason}")
     return 0
 
 

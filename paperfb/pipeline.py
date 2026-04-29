@@ -61,6 +61,7 @@ from paperfb.handoffs import (
     classify_to_profile,
 )
 from paperfb.logging_hook import JsonlLogger
+from paperfb.renderer import render_report
 from paperfb.schemas import BoardReport, ClassificationResult, ProfileBoard, RunOutput
 
 
@@ -265,6 +266,10 @@ def run(*, manuscript: str, cfg: Config) -> RunOutput:
     board = BoardReport.model_validate(dict(ctx["board"]))
 
     run_obj = RunOutput(classification=classification, profiles=profiles, board=board)
+
+    report_path = Path(cfg.paths.output)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(render_report(run_obj))
 
     eval_dir = Path("evaluations") / ts
     eval_dir.mkdir(parents=True, exist_ok=True)
