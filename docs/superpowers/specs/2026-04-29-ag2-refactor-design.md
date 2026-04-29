@@ -296,10 +296,7 @@ AG2's native Anthropic structured-output support requires `api_type: "anthropic"
 
 **Constraint adopted:** every agent that uses `response_format=PydanticModel` (Classification, ProfileCreation, Reviewer, Chair) must run on a model whose proxy path honours `response_format`. Per the matrix above, that is OpenAI or Google. Judge stays on Google (Gemini Flash Lite) — different family from reviewer for bias mitigation, with structured output supported through the proxy.
 
-If a future requirement re-introduces Claude as a structured-output agent, two escape hatches exist:
-
-- **Tool-calling** as the structured-output transport for that agent only (forced function call as the response shape; works for all three models per the probe). Per-agent transport split.
-- **AG2 beta `Agent` with `response_schema`** ([AG2 beta structured outputs](https://docs.ag2.ai/latest/docs/beta/structured_output/)). Includes a `PromptedSchema` fallback that injects the schema into the system prompt for providers without native support, then validates. Beta agents bridge into our GroupChat patterns via `as_conversable()` ([AG2 Beta blog](https://docs.ag2.ai/latest/docs/blog/2026/03/16/AG2-Beta/)). **Not adopted for v1** because (a) the beta API is positioned as "especially strong for single-agent applications" while we have a 5-agent multi-pattern setup; (b) `PromptedSchema` is mechanically equivalent to our `json_object`-with-prompt-injected-schema probe path; (c) stacking beta + `as_conversable()` + Default Pattern + RedundantPattern + FunctionTarget is unverified. Re-evaluate when AG2 beta becomes stable / 1.0.
+If a future requirement re-introduces Claude as a structured-output agent, the implementation can adopt **tool-calling** as the structured-output transport for that agent only (forced function call as the response shape; works for all three models per the probe).
 
 ## 6. Cross-cutting concerns
 
@@ -430,7 +427,11 @@ Existing test files to be migrated:
 
 ## 10. Migration plan (high-level; a detailed plan is the next deliverable via `writing-plans`)
 
-The refactor is large enough that an in-place rewrite without a working pipeline at intermediate steps is acceptable: we have no production users, no compatibility consumers, and the existing v1 pipeline is checked in at HEAD as the reference. The implementation plan (separate document) will sequence the refactor as:
+**Approach: in-place rewrite.** No feature flag, no parallel pipeline, no compatibility shim. The existing v1 pipeline at HEAD is the reference; intermediate commits during the rewrite may not produce working end-to-end runs. Rationale: no production users, no external consumers, and a parallel pipeline would double the surface area being maintained for the duration of the refactor.
+
+**Dependency pin:** `ag2==0.12.1` (latest stable on PyPI as of 2026-04-29). The `pyproject.toml` change replaces the existing `openai>=1.50.0` direct dependency with `ag2[openai]==0.12.1`, which transitively pulls in a compatible `openai` SDK.
+
+The implementation plan (separate document) will sequence the refactor as:
 
 1. Add AG2 dependency, scaffold `paperfb/schemas.py` with all Pydantic models and tests for them.
 2. Move `sample_board` and `lookup_acm` into `paperfb/tools/` with Pydantic-typed I/O.
