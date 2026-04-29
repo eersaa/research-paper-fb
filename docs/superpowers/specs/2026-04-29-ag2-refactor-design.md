@@ -296,7 +296,10 @@ AG2's native Anthropic structured-output support requires `api_type: "anthropic"
 
 **Constraint adopted:** every agent that uses `response_format=PydanticModel` (Classification, ProfileCreation, Reviewer, Chair) must run on a model whose proxy path honours `response_format`. Per the matrix above, that is OpenAI or Google. Judge stays on Google (Gemini Flash Lite) — different family from reviewer for bias mitigation, with structured output supported through the proxy.
 
-If a future requirement re-introduces Claude as a structured-output agent, the implementation can adopt **tool-calling** as the structured-output transport for that agent only (forced function call as the response shape; works for all three models per the probe).
+If a future requirement re-introduces Claude as a structured-output agent, two escape hatches exist:
+
+- **Tool-calling** as the structured-output transport for that agent only (forced function call as the response shape; works for all three models per the probe). Per-agent transport split.
+- **AG2 beta `Agent` with `response_schema`** ([AG2 beta structured outputs](https://docs.ag2.ai/latest/docs/beta/structured_output/)). Includes a `PromptedSchema` fallback that injects the schema into the system prompt for providers without native support, then validates. Beta agents bridge into our GroupChat patterns via `as_conversable()` ([AG2 Beta blog](https://docs.ag2.ai/latest/docs/blog/2026/03/16/AG2-Beta/)). **Not adopted for v1** because (a) the beta API is positioned as "especially strong for single-agent applications" while we have a 5-agent multi-pattern setup; (b) `PromptedSchema` is mechanically equivalent to our `json_object`-with-prompt-injected-schema probe path; (c) stacking beta + `as_conversable()` + Default Pattern + RedundantPattern + FunctionTarget is unverified. Re-evaluate when AG2 beta becomes stable / 1.0.
 
 ## 6. Cross-cutting concerns
 
