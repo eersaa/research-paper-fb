@@ -249,12 +249,19 @@ def setup_review_board(
 
 ## 5. Configuration
 
-`config/default.yaml` keeps its existing shape (already documented in the v1 design). Two additions:
+`config/default.yaml` is updated. Default model changes from Claude Haiku to GPT-4.1-mini for all structured-output agents — see §5.1 for the empirical reason. Two new keys (`ag2.*`):
 
 ```yaml
 ag2:
   cache_seed: null              # AG2 caches LLM responses by seed; null disables
   retry_on_validation_error: 1  # retries on Pydantic validation failure
+
+models:
+  default: openai/gpt-4.1-mini
+  classification: openai/gpt-4.1-mini
+  profile_creation: openai/gpt-4.1-mini
+  reviewer: openai/gpt-4.1-mini
+  judge: google/gemini-2.5-flash-lite     # different family from reviewer for bias mitigation
 ```
 
 `llm_config` is built once in `paperfb/pipeline.py` from `Config`:
@@ -273,7 +280,23 @@ def build_llm_config(cfg: Config) -> dict:
     }
 ```
 
-Per-agent overrides swap the `model` field only (Classification, ProfileCreation, Reviewer, Chair, Judge each pin their configured course-recommended model).
+Per-agent overrides swap the `model` field only (Classification, ProfileCreation, Reviewer, Chair, Judge each pin their configured model).
+
+### 5.1 Model selection constraint (empirical)
+
+The course proxy forwards `OpenAI /chat/completions` calls to OpenRouter. With `api_type: "openai"` AG2 sends a plain OpenAI-shaped `response_format` payload regardless of the underlying model. A compatibility probe ([_test_proxy_structured.py](../../../scripts/probe_proxy_structured.py), 2026-04-29) shows:
+
+| Model | `response_format` (Pydantic / json_schema) | tool-calling | json_object |
+| --- | --- | --- | --- |
+| `openai/gpt-4.1-mini` | works | works | works |
+| `google/gemini-2.5-flash-lite` | works | flaky (one 504 in test) | works |
+| `anthropic/claude-3.5-haiku` | **does not honour — returns prose** | works | works |
+
+AG2's native Anthropic structured-output support requires `api_type: "anthropic"` with a direct Anthropic API key + the `structured-outputs-2025-11-13` beta header — not available through this proxy and would also bypass the non-leakage property (§6.7).
+
+**Constraint adopted:** every agent that uses `response_format=PydanticModel` (Classification, ProfileCreation, Reviewer, Chair) must run on a model whose proxy path honours `response_format`. Per the matrix above, that is OpenAI or Google. Judge stays on Google (Gemini Flash Lite) — different family from reviewer for bias mitigation, with structured output supported through the proxy.
+
+If a future requirement re-introduces Claude as a structured-output agent, the implementation can adopt **tool-calling** as the structured-output transport for that agent only (forced function call as the response shape; works for all three models per the probe).
 
 ## 6. Cross-cutting concerns
 
@@ -408,7 +431,7 @@ The refactor is large enough that an in-place rewrite without a working pipeline
 
 1. Add AG2 dependency, scaffold `paperfb/schemas.py` with all Pydantic models and tests for them.
 2. Move `sample_board` and `lookup_acm` into `paperfb/tools/` with Pydantic-typed I/O.
-3. Build Classification agent (module + builder + handoff stub) + integration test against mocked AG2 LLM.
+3. Build Classification agent (module + builder + handoff stub) + integration test against mocked AG2 LLM. (No need to re-verify `response_format` per model — already verified in §5.1.)
 4. Build ProfileCreation agent + integration test.
 5. Build reviewer factory + Chair aggregator + `setup_review_board` FunctionTarget that constructs the RedundantPattern from `ProfileBoard` and returns a `NestedChatTarget` + integration test.
 6. Wire the full pipeline in `paperfb/pipeline.py` with `UserProxyAgent` entry; replace `paperfb/orchestrator.py` and `paperfb/llm_client.py`.
@@ -424,7 +447,7 @@ The refactor is large enough that an in-place rewrite without a working pipeline
 
 Resolved during this design pass:
 
-- **`response_format` across course models.** AG2 natively supports `response_format=PydanticModel` for OpenAI, Anthropic, Google Gemini, and Ollama clients ([AG2 Structured Outputs](https://docs.ag2.ai/latest/docs/user-guide/basic-concepts/structured-outputs/)). Our setup uses `api_type: "openai"` against the course proxy, so AG2 sends a plain OpenAI-shaped `response_format` payload regardless of underlying model; the proxy (OpenRouter) then translates per-provider. Schema constraints we adopt to stay portable: every Pydantic root model defines a `title`, every model sets `model_config = {"extra": "forbid"}` (works around [Gemini's `additionalProperties` issue](https://github.com/ag2ai/ag2/issues/2348)), and schemas are kept OpenAPI-compliant (no `Union[Literal[...], None]` chains, etc.). Smoke-test each course model in migration Step 3; if any fail, fall back to AG2's function-calling-based JSON-schema adapter for that one model. No design impact.
+- **`response_format` across course models.** Empirically verified ([_test_proxy_structured.py](../../../scripts/probe_proxy_structured.py), 2026-04-29) against the course proxy: OpenAI (`gpt-4.1-mini`) and Google (`gemini-2.5-flash-lite`) honour `response_format=PydanticModel`; Anthropic Claude 3.5 Haiku does NOT (returns prose). AG2's native Anthropic structured-output path requires direct Anthropic API access (incompatible with this proxy and with the non-leakage property). Therefore Classification, ProfileCreation, Reviewer, and Chair are pinned to OpenAI/Google models. See §5.1 for the matrix and the constraint. Schema portability rules we adopt: every Pydantic root model defines a `title`, every model sets `model_config = {"extra": "forbid"}` (works around [Gemini's `additionalProperties` issue](https://github.com/ag2ai/ag2/issues/2348)), schemas stay OpenAPI-compliant.
 - **Carryover shape between handoffs.** AG2 supports sub-field extraction via `FunctionTarget` + `FunctionTargetResult`. The handoff function receives the previous agent's output as a string, can parse it into a Pydantic model, write to shared `ContextVariables` (hidden from LLMs), and emit a curated `message` for the next agent — or transition to a `NestedChatTarget`. Used twice: classify→profile (sub-field extraction) and profile→reviewer-board (runtime agent construction). See §4.4 and §6.2.
 - **RedundantPattern aggregator shape.** Per AG2 docs, the aggregator in the documented pattern is a `ConversableAgent`. Chair adopts that role: a thin LLM agent with `response_format=BoardReport` that collates verbatim. See §4.4.
 - **Runtime reviewer instantiation.** Lives in a `FunctionTarget` (`setup_review_board`) on ProfileCreation's handoff, which builds N reviewer `ConversableAgent`s from the parsed `ProfileBoard` and returns a `NestedChatTarget` for the constructed RedundantPattern. No tool dispatch and no extra LLM call needed for setup. See §4.4.
