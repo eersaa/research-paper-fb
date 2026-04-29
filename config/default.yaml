@@ -3,6 +3,7 @@ base_url_env: BASE_URL
 ag2:
   cache_seed: null
   retry_on_validation_error: 1
+  max_rounds: 60
 models:
   default: openai/gpt-4.1-mini
   classification: openai/gpt-4.1-mini

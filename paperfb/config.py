@@ -8,6 +8,7 @@ import yaml
 class Ag2Config:
     cache_seed: int | None
     retry_on_validation_error: int
+    max_rounds: int
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ def load_config(default_path: Path, axes_path: Path) -> Config:
     ag2 = Ag2Config(
         cache_seed=ag2_raw.get("cache_seed"),
         retry_on_validation_error=int(ag2_raw.get("retry_on_validation_error", 1)),
+        max_rounds=int(ag2_raw.get("max_rounds", 60)),
     )
     return Config(
         transport=d["transport"],

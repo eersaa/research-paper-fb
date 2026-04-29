@@ -247,7 +247,7 @@ def _run_chat(*, manuscript: str, cfg: Config, ts: str) -> Any:
         _chat_result, final_ctx, _last_agent = initiate_group_chat(
             pattern=pattern,
             messages=manuscript,
-            max_rounds=20,
+            max_rounds=cfg.ag2.max_rounds,
         )
 
         logger.log_event({"agent": "pipeline", "role": "system", "content": "chat_end"})
