@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from paperfb.agents.profile_creation.sampler import sample_reviewer_tuples
+from paperfb.agents.profile_creation_legacy.sampler import sample_reviewer_tuples
 from paperfb.contracts import ReviewerTuple
 
 STANCES = ["neutral", "critical", "skeptical", "supportive", "rigorous"]

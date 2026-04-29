@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from paperfb.contracts import ClassificationResult
-from paperfb.agents.classification.tools import (
+from paperfb.agents.classification_legacy.tools import (
     lookup_acm,
     submit_classification,
     load_ccs,

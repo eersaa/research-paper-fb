@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from paperfb.contracts import ReviewerProfile
-from paperfb.agents.reviewer.tools import write_review, TOOL_SCHEMA, ReviewValidationError
+from paperfb.agents.reviewer_legacy.tools import write_review, TOOL_SCHEMA, ReviewValidationError
 
 REVIEWER_USER_TEMPLATE = """Manuscript follows between the markers.
 

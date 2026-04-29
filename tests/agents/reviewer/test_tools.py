@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from paperfb.agents.reviewer.tools import write_review, TOOL_SCHEMA, ReviewValidationError
+from paperfb.agents.reviewer_legacy.tools import write_review, TOOL_SCHEMA, ReviewValidationError
 
 
 def _sample_review(rid="r1"):

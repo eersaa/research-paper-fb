@@ -1,7 +1,7 @@
 import json
 from unittest.mock import MagicMock
-from paperfb.agents.profile_creation import create_profiles, ReviewerProfile
-from paperfb.agents.profile_creation.sampler import ReviewerTuple
+from paperfb.agents.profile_creation_legacy import create_profiles, ReviewerProfile
+from paperfb.agents.profile_creation_legacy.sampler import ReviewerTuple
 from paperfb.config import AxesConfig, AxisItem
 
 

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from paperfb.agents.classification.tools import lookup_acm, load_ccs
+from paperfb.agents.classification_legacy.tools import lookup_acm, load_ccs
 
 
 @pytest.fixture
@@ -99,7 +99,7 @@ def test_load_ccs_from_file(ccs_path):
 
 # --- submit_classification validator ---
 
-from paperfb.agents.classification.tools import (
+from paperfb.agents.classification_legacy.tools import (
     submit_classification,
     ClassificationValidationError,
     TOOL_SCHEMAS,

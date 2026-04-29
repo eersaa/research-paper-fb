@@ -5,9 +5,9 @@ from pathlib import Path
 
 from paperfb.config import Config
 from paperfb.contracts import SkippedReviewer
-from paperfb.agents.classification import classify_manuscript
-from paperfb.agents.profile_creation import create_profiles, sample_reviewer_tuples
-from paperfb.agents.reviewer import run_reviewer
+from paperfb.agents.classification_legacy import classify_manuscript
+from paperfb.agents.profile_creation_legacy import create_profiles, sample_reviewer_tuples
+from paperfb.agents.reviewer_legacy import run_reviewer
 from paperfb.renderer import render_report
 
 

@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
-from paperfb.agents.reviewer import run_reviewer
+from paperfb.agents.reviewer_legacy import run_reviewer
 from paperfb.contracts import ReviewerProfile
 
 

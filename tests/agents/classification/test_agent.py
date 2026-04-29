@@ -1,7 +1,7 @@
 import json
 from unittest.mock import MagicMock
 import pytest
-from paperfb.agents.classification import classify_manuscript, ClassificationResult
+from paperfb.agents.classification_legacy import classify_manuscript, ClassificationResult
 
 
 def _tc(name, args, call_id="call_1"):
