@@ -1,6 +1,6 @@
 """Classification agent (spec §4.1)."""
-from __future__ import annotations
-
+# NOTE: no `from __future__ import annotations` — see paperfb/agents/profile_creation.py
+# for the full rationale. AG2 introspects tool annotations at register_for_llm time.
 from pathlib import Path
 from typing import Any
 

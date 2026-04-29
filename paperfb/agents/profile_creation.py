@@ -1,6 +1,8 @@
 """ProfileCreation agent (spec §4.2)."""
-from __future__ import annotations
-
+# NOTE: no `from __future__ import annotations` here. AG2's register_for_llm
+# introspects tool callables via Pydantic TypeAdapter, which can't resolve
+# stringified ForwardRefs from a closure's namespace. Python 3.11 supports
+# native list[X] / X | None at runtime, so this works without the future import.
 from pathlib import Path
 from typing import Any
 

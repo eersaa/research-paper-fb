@@ -43,6 +43,7 @@ from typing import Any
 
 from autogen import ConversableAgent, UserProxyAgent
 from autogen.agentchat.group import (
+    AgentTarget,
     ContextVariables,
     FunctionTarget,
     FunctionTargetResult,
@@ -82,25 +83,25 @@ def _build_llm_config(cfg: Config, model: str) -> dict:
     }
 
 
-def _wrap_handoff(fn: Any) -> Any:
+def _wrap_handoff(fn: Any, *, next_target: Any) -> Any:
     """Adapt a HandoffResult-returning function into AG2 FunctionTargetResult.
 
-    Spike finding: FunctionTargetResult.target is required (non-optional).
-    HandoffResult.target=None means "terminate" — map to TerminateTarget().
-    FunctionTargetResult uses `messages` field (str | list | None), not `message`.
-    Context mutation by handoff fn (e.g. context_variables["classification"] = ...)
-    happens inside fn itself; we do not pass context_variables back via
-    FunctionTargetResult.context_variables to avoid double-application.
+    next_target: the TransitionTarget that AG2 should advance to after fn runs
+    (e.g. AgentTarget(profile_agent) for classify_to_profile, TerminateTarget()
+    for setup_review_board). Required because FunctionTargetResult.target is
+    non-optional in AG2 0.12.1, and DefaultPattern does NOT auto-advance after
+    a FunctionTarget returns — the handoff itself must name the next speaker.
+
+    Spike finding: FunctionTargetResult uses `messages` (str | list | None),
+    not `message`. Context mutation by fn (e.g. ctx["classification"] = ...)
+    happens inside fn itself; we don't echo it back via context_variables= to
+    avoid double-application.
     """
     def wrapper(agent_output: str, context_variables: Any) -> FunctionTargetResult:
-        # context_variables is ContextVariables (dict-like) in AG2 0.12.1.
-        # handoffs.py functions accept dict, ContextVariables is dict-compatible.
         result: HandoffResult = fn(agent_output, context_variables)
-        # HandoffResult.target=None means no further transition — terminate chat.
-        target = result.target if result.target is not None else TerminateTarget()
         return FunctionTargetResult(
             messages=result.message,
-            target=target,
+            target=next_target,
         )
     wrapper.__name__ = fn.__name__
     return wrapper
@@ -213,11 +214,19 @@ def _run_chat(*, manuscript: str, cfg: Config, ts: str) -> Any:
         # Post-turn handoffs.
         # Spike confirmed: set_after_work takes a positional TransitionTarget, not keyword.
         # FunctionTarget validates that fn accepts (output, ctx) — wrapper satisfies this.
+        # Each handoff must name its own next-speaker target — DefaultPattern does NOT
+        # auto-advance after a FunctionTarget completes (live test, 2026-04-29).
         classification_agent.handoffs.set_after_work(
-            FunctionTarget(_wrap_handoff(classify_to_profile))
+            FunctionTarget(_wrap_handoff(
+                classify_to_profile,
+                next_target=AgentTarget(profile_agent),
+            ))
         )
         profile_agent.handoffs.set_after_work(
-            FunctionTarget(_wrap_handoff(setup_review_board))
+            FunctionTarget(_wrap_handoff(
+                setup_review_board,
+                next_target=TerminateTarget(),
+            ))
         )
 
         context_variables = ContextVariables(data={
