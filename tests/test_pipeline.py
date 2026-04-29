@@ -23,7 +23,6 @@ def cfg(tmp_path):
         c.paths,
         output=str(tmp_path / "report.md"),
         logs_dir=str(tmp_path / "logs"),
-        reviews_dir=str(tmp_path / "reviews"),
     ))
 
 

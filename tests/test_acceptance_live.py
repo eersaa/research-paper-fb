@@ -1,5 +1,3 @@
-import asyncio
-import json
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -7,8 +5,7 @@ import pytest
 from dotenv import load_dotenv
 
 from paperfb.config import load_config
-from paperfb.llm_client import from_env
-from paperfb.orchestrator import run_pipeline
+from paperfb.pipeline import run as pipeline_run
 
 
 pytestmark = pytest.mark.slow
@@ -21,7 +18,6 @@ def cfg_tmp(tmp_path):
     cfg = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
     return replace(cfg, paths=replace(
         cfg.paths,
-        reviews_dir=str(tmp_path / "reviews"),
         output=str(tmp_path / "report.md"),
         logs_dir=str(tmp_path / "logs"),
     ))
@@ -34,9 +30,8 @@ def manuscript():
 
 def test_live_pipeline_produces_report(cfg_tmp, manuscript, tmp_path):
     assert os.environ.get("BASE_URL"), "BASE_URL env var required for live test"
-    llm = from_env(default_model=cfg_tmp.models.default)
 
-    result = asyncio.run(run_pipeline(manuscript=manuscript, cfg=cfg_tmp, llm=llm))
+    result = pipeline_run(manuscript=manuscript, cfg=cfg_tmp)
 
     # (a) report exists
     report = Path(cfg_tmp.paths.output)
@@ -48,11 +43,11 @@ def test_live_pipeline_produces_report(cfg_tmp, manuscript, tmp_path):
 
     # (c) ACM classes present
     assert "## ACM classification" in text
-    assert len(result.classes) >= 1
+    assert len(result.classification.classes) >= 1
 
     # (d) reviewer stances distinct per (stance, primary_focus)
-    pairs = {(r["stance"], r["primary_focus"]) for r in result.reviews}
-    assert len(pairs) == len(result.reviews), "stance/focus pair duplication"
+    pairs = {(r.profile.stance, r.profile.primary_focus) for r in result.board.reviews}
+    assert len(pairs) == len(result.board.reviews), "stance/focus pair duplication"
 
     # (e) no manuscript text leaks to stdout/logs
     #     manuscript has a unique sentinel phrase:

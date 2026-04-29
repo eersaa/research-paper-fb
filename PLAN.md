@@ -41,16 +41,16 @@ Separate evaluation harness (deferred — built last): **Judge Agent** scores re
 - **Reviewer naming:** sampler picks a unique Finnish given name from `data/finnish_names.json` per reviewer; surfaced in persona prompt and rendered review header.
 - **Transport:** OpenAI `/chat/completions` via the provided proxy — routes to any course-recommended text model (Claude Haiku, GPT-4.1-mini, Gemini Flash).
 - **Default model:** `anthropic/claude-3.5-haiku`; judge uses a different model for bias mitigation.
-- **Output:** per-reviewer JSON → rendered markdown. One file per reviewer avoids concurrency issues.
+- **Output:** `RunOutput` (Pydantic, in-memory) → rendered markdown. No per-reviewer JSON files written at runtime.
 - **Evaluation:** separate LLM-as-judge harness with a 5-dimension Likert rubric. Judge implemented test-first.
 - **Implementation phasing:** Wave 1 = core pipeline end-to-end (Classification → Profile Creation → Reviewers → Renderer + offline prep). Wave 2 (deferred to last) = Judge harness, cost / token-usage reporting aggregation, EDAS rubric capture.
 - **No-leakage:** only local file writes + proxy as network egress.
 
 ## Agent API
 
-OpenRouter via the AWS proxy (`BASE_URL` in `.env`). OpenAI chat completions format. No API key. See `proxy-test.py`.
+OpenRouter via the AWS proxy (`BASE_URL` in `.env`). OpenAI chat completions format. No API key.
 
-Framework: bare `openai` Python SDK with `base_url` pointed at the proxy, plus a thin homegrown orchestrator — keeps model choice free across all three recommended options.
+Framework: `ag2==0.12.1` (`autogen` package) — `ConversableAgent` + `UserProxyAgent` in a `DefaultPattern` group chat, with `FunctionTarget` post-turn handoffs. Structured outputs via Pydantic `response_format`. See [docs/superpowers/specs/2026-04-29-ag2-refactor-design.md](docs/superpowers/specs/2026-04-29-ag2-refactor-design.md) for full architecture.
 
 ## Development environment
 

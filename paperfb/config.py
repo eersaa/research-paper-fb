@@ -37,7 +37,6 @@ class ClassificationConfig:
 class PathsConfig:
     acm_ccs: str
     finnish_names: str
-    reviews_dir: str
     output: str
     logs_dir: str
 

@@ -19,27 +19,29 @@ Add `-n 5` to use 5 reviewers, `--config path/to/your.yaml` to override the conf
 
 ## Architecture
 
-Three agents + a deterministic renderer. Separate evaluation harness.
+AG2 group-chat pipeline (`ag2==0.12.1`) with Pydantic-typed structured outputs.
 
 ```
 manuscript.md
     ↓
-Classification Agent  ──(tool: lookup_acm)──► data/acm_ccs.json
-    ↓   ACM classes
-Profile Creation Agent (sampler + LLM) ──► N personas
+Classification Agent  ──(tool: lookup_acm)──► data/acm_ccs.json → ClassificationResult
     ↓
-Reviewer Agents (N in parallel) ──(tool: write_review)──► reviews/r*.json
+Profile Creation Agent ──(tool: sample_board)──► N personas → ProfileBoard
     ↓
-Renderer (pure Python)
+Reviewer Agents (inline fan-out, N parallel) → BoardReport
     ↓
-final_report.md
+Renderer (pure Python, reads RunOutput)
+    ↓
+final_report.md   +   evaluations/run-<ts>/run.json
 ```
 
-See [docs/superpowers/specs/2026-04-24-research-paper-feedback-system-design.md](docs/superpowers/specs/2026-04-24-research-paper-feedback-system-design.md) for the full design.
+Pipeline: `UserProxyAgent → Classification → ProfileCreation → inline reviewer fan-out → BoardReport`. Renderer is pure code; joins reviews to profiles by `reviewer_id`.
+
+See [docs/superpowers/specs/2026-04-29-ag2-refactor-design.md](docs/superpowers/specs/2026-04-29-ag2-refactor-design.md) for full architecture.
 
 ## Non-leakage property
 
-The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No telemetry, no third-party calls. Outputs land in `reviews/`, `final_report.md`, `logs/`, `evaluations/` — all local.
+The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No telemetry, no third-party calls. Outputs land in `final_report.md`, `logs/`, `evaluations/` — all local.
 
 ## Evaluation
 
@@ -47,13 +49,6 @@ The manuscript is transmitted only to the configured LLM proxy (`BASE_URL`). No 
 # After running the pipeline, judge each reviewer's review:
 uv run python scripts/judge.py --manuscript path/to/manuscript.md
 # → evaluations/run-<UTC-timestamp>.json
-
-# Override defaults:
-uv run python scripts/judge.py \
-    --manuscript path/to/manuscript.md \
-    --reviews-dir reviews \
-    --output evaluations/myrun.json \
-    --model openai/gpt-4.1-mini
 ```
 
 Each reviewer is scored on five 1–5 Likert dimensions: `specificity`, `actionability`, `persona_fidelity`, `coverage`, `non_redundancy`. Each dimension has its own justification. The output JSON also includes a `mean` per reviewer and a `board_mean` across all reviewers. The judge defaults to `cfg.models.judge` (different from the reviewer model) to reduce self-preference bias.

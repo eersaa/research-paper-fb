@@ -28,13 +28,14 @@ def test_parse_ccs_tree_returns_paths_with_leaf_flags():
     assert paths[leaf]["leaf"] is True
 
 
-def _stub_llm(return_content):
+def _stub_client(return_content):
+    """Stub OpenAI client: client.chat.completions.create(...) returns a response."""
     client = MagicMock()
-    res = MagicMock()
-    res.content = return_content
-    res.tool_calls = None
-    res.finish_reason = "stop"
-    client.chat.return_value = res
+    choice = MagicMock()
+    choice.message.content = return_content
+    resp = MagicMock()
+    resp.choices = [choice]
+    client.chat.completions.create.return_value = resp
     return client
 
 
@@ -46,23 +47,23 @@ def test_generate_descriptions_caches_and_skips_cached(tmp_path):
     cache_path = tmp_path / "cache.json"
     cache_path.write_text(json.dumps({"A": "pre-cached description"}))
 
-    llm = _stub_llm("generated")
-    out = generate_descriptions(entries, llm=llm, model="stub", cache_path=cache_path)
+    client = _stub_client("generated")
+    out = generate_descriptions(entries, client=client, model="stub", cache_path=cache_path)
 
     assert out[0]["description"] == "pre-cached description"
     assert out[1]["description"] == "generated"
-    assert llm.chat.call_count == 1   # only the uncached entry triggered a call
+    assert client.chat.completions.create.call_count == 1   # only uncached entry triggered a call
 
     cached = json.loads(cache_path.read_text())
     assert cached["A → B"] == "generated"
 
 
 def test_build_end_to_end_writes_output(tmp_path):
-    llm = _stub_llm("desc")
+    client = _stub_client("desc")
     out_path = tmp_path / "acm_ccs.json"
     cache_path = tmp_path / "cache.json"
     build(source_xml=FIXTURE, out_path=out_path, cache_path=cache_path,
-          llm=llm, model="stub")
+          client=client, model="stub")
     data = json.loads(out_path.read_text())
     assert len(data) == 3
     for entry in data:

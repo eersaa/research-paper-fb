@@ -12,13 +12,13 @@ generated via the LLM on first run and cached; reruns hit the cache.
 from __future__ import annotations
 import argparse
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Iterable
 from dotenv import load_dotenv
-
-from paperfb.llm_client import from_env
+from openai import OpenAI
 
 NS = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -83,7 +83,7 @@ def _save_cache(cache_path: Path, cache: dict[str, str]) -> None:
     cache_path.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
 
 
-def generate_descriptions(entries: Iterable[dict], llm, model: str,
+def generate_descriptions(entries: Iterable[dict], client: OpenAI, model: str,
                           cache_path: Path) -> list[dict]:
     cache = _load_cache(cache_path)
     out: list[dict] = []
@@ -93,14 +93,14 @@ def generate_descriptions(entries: Iterable[dict], llm, model: str,
         if path in cache:
             out.append({**entry, "description": cache[path]})
             continue
-        res = llm.chat(
+        resp = client.chat.completions.create(
+            model=model,
             messages=[
                 {"role": "system", "content": DESC_SYSTEM},
                 {"role": "user", "content": f"CCS concept path:\n{path}"},
             ],
-            model=model,
         )
-        desc = (res.content or "").strip()
+        desc = (resp.choices[0].message.content or "").strip()
         cache[path] = desc
         dirty = True
         out.append({**entry, "description": desc})
@@ -112,9 +112,9 @@ def generate_descriptions(entries: Iterable[dict], llm, model: str,
 
 
 def build(source_xml: Path, out_path: Path, cache_path: Path,
-          llm, model: str) -> None:
+          client: OpenAI, model: str) -> None:
     entries = parse_ccs_tree(source_xml)
-    enriched = generate_descriptions(entries, llm=llm, model=model,
+    enriched = generate_descriptions(entries, client=client, model=model,
                                       cache_path=cache_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(enriched, indent=2, ensure_ascii=False))
@@ -135,9 +135,9 @@ def main(argv=None) -> int:
         print("Download ACM CCS 2012 SKOS XML and save it to that path.", file=sys.stderr)
         return 2
 
-    llm = from_env(default_model=args.model)
+    client = OpenAI(base_url=os.environ["BASE_URL"], api_key="unused")
     build(source_xml=source, out_path=Path(args.output),
-          cache_path=Path(args.cache), llm=llm, model=args.model)
+          cache_path=Path(args.cache), client=client, model=args.model)
     print(f"Wrote {args.output}")
     return 0
 
