@@ -1,42 +1,38 @@
-"""LLM-as-judge evaluation harness for reviewer feedback.
+"""LLM-as-judge harness. Reads evaluations/run-<ts>/run.json (RunOutput),
+scores each review on the 5-dim Likert rubric, writes judge.json alongside.
 
-Scores one reviewer's review on a 5-dim Likert (1-5) rubric using a
-strict-JSON prompt and validates the response. Standalone — no runtime
-coupling to the orchestrator. Different model from the reviewers
-(bias mitigation per spec §9) is enforced by the caller.
+Bypasses AG2 — calls the proxy directly via the OpenAI SDK. Judge is a
+Wave-2 standalone tool (spec §8) and doesn't need chat orchestration.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
+from openai import OpenAI
 
 from paperfb.config import load_config
-from paperfb.llm_client import from_env
+from paperfb.schemas import (
+    DimensionScore, JudgeScore, Review, ReviewerProfile, RunOutput,
+)
 
 
 DIMENSIONS = ["specificity", "actionability", "persona_fidelity", "coverage", "non_redundancy"]
 
 
 JUDGE_SYSTEM = """You are an impartial evaluator of peer-review feedback.
-Given a manuscript and one reviewer's review, score the review on five 1-5 Likert dimensions.
+Given a manuscript, the reviewer's persona context, and the reviewer's review,
+score the review on five 1-5 Likert dimensions:
 
-  - specificity: grounded in manuscript text vs generic
-                 (5 = quotes / section refs; 1 = vague generalities)
-  - actionability: suggestions are concrete and implementable
-                   (5 = stepwise + measurable; 1 = "improve X")
+  - specificity:      grounded in manuscript text vs generic
+  - actionability:    suggestions are concrete and implementable
   - persona_fidelity: matches assigned stance + primary_focus
-                      (5 = clearly on-persona; 1 = off-brief)
-  - coverage: primary focus area is meaningfully addressed
-              (5 = deep; 1 = superficial)
-  - non_redundancy: contributes points distinct from generic boilerplate
-                    (5 = distinct; 1 = generic)
+  - coverage:         primary focus area is meaningfully addressed
+  - non_redundancy:   contributes points distinct from generic boilerplate
 
 Respond with STRICT JSON only — no prose, no markdown fences. Each "score" must be an integer in [1, 5]:
 {"specificity":      {"score": <integer 1-5>, "justification": "..."},
@@ -47,119 +43,115 @@ Respond with STRICT JSON only — no prose, no markdown fences. Each "score" mus
 """
 
 
-@dataclass
-class DimensionScore:
-    score: int
-    justification: str
+class _OpenAIChat:
+    """Thin wrapper around OpenAI SDK matching the v1 LLMClient.chat() contract."""
+
+    def __init__(self, client: OpenAI):
+        self._client = client
+
+    def chat(self, messages, model, **kw):
+        resp = self._client.chat.completions.create(model=model, messages=messages, **kw)
+        choice = resp.choices[0]
+        return type("Res", (), {
+            "content": choice.message.content,
+            "tool_calls": None,
+            "finish_reason": choice.finish_reason,
+        })()
 
 
-@dataclass
-class RubricScores:
-    specificity: DimensionScore
-    actionability: DimensionScore
-    persona_fidelity: DimensionScore
-    coverage: DimensionScore
-    non_redundancy: DimensionScore
-
-    @property
-    def mean(self) -> float:
-        return sum(getattr(self, d).score for d in DIMENSIONS) / len(DIMENSIONS)
+def from_env(default_model: str):
+    """Construct an OpenAI client wrapper pointing at the proxy. Module-level
+    callable so tests can monkey-patch it."""
+    return _OpenAIChat(OpenAI(base_url=os.environ["BASE_URL"], api_key="unused"))
 
 
-def _build_user_message(manuscript: str, review: dict) -> str:
+def _user_message(manuscript: str, review: Review, profile: ReviewerProfile) -> str:
     return (
         f"Manuscript:\n<MANUSCRIPT>\n{manuscript}\n</MANUSCRIPT>\n\n"
-        f"Reviewer stance: {review.get('stance')}\n"
-        f"Reviewer primary_focus: {review.get('primary_focus')}\n"
-        f"Reviewer secondary_focus: {review.get('secondary_focus')}\n\n"
-        f"Review JSON:\n{json.dumps(review, indent=2, ensure_ascii=False)}"
+        f"Reviewer stance: {profile.stance}\n"
+        f"Reviewer primary_focus: {profile.primary_focus}\n"
+        f"Reviewer secondary_focus: {profile.secondary_focus}\n\n"
+        f"Review JSON:\n{review.model_dump_json(indent=2)}"
     )
 
 
-def _parse_dimension(raw: dict, dim: str) -> DimensionScore:
-    if dim not in raw:
-        raise ValueError(f"missing dimension {dim}")
-    entry = raw[dim]
-    if not isinstance(entry, dict) or "score" not in entry:
-        raise ValueError(f"{dim} must be a dict with 'score' and 'justification'")
-    score = entry["score"]
-    if isinstance(score, bool) or not isinstance(score, int):
-        raise ValueError(f"{dim}: score must be an integer, got {type(score).__name__} {score!r}")
-    if not (1 <= score <= 5):
-        raise ValueError(f"{dim} out of range: {score} (must be 1-5)")
-    return DimensionScore(score=score, justification=entry.get("justification", ""))
+def _validate_score(raw: dict) -> JudgeScore:
+    js = JudgeScore.model_validate(raw)
+    for dim in DIMENSIONS:
+        s = getattr(js, dim).score
+        if not (1 <= s <= 5):
+            raise ValueError(f"{dim} out of range: {s} (must be 1-5)")
+    return js
 
 
-def judge_review(manuscript: str, review: dict, llm, model: str) -> RubricScores:
+def judge_review(
+    manuscript: str,
+    review: Review,
+    profile: ReviewerProfile,
+    llm,
+    model: str,
+) -> JudgeScore:
     res = llm.chat(
         messages=[
             {"role": "system", "content": JUDGE_SYSTEM},
-            {"role": "user", "content": _build_user_message(manuscript, review)},
+            {"role": "user", "content": _user_message(manuscript, review, profile)},
         ],
         model=model,
     )
-    raw = json.loads(res.content)
-    return RubricScores(**{dim: _parse_dimension(raw, dim) for dim in DIMENSIONS})
+    return _validate_score(json.loads(res.content))
 
 
-def _run_id() -> str:
-    return "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+def _mean(score: JudgeScore) -> float:
+    return sum(getattr(score, d).score for d in DIMENSIONS) / len(DIMENSIONS)
 
 
-def _scores_to_dict(scores: RubricScores) -> dict:
-    out: dict = {}
-    for dim in DIMENSIONS:
-        out[dim] = asdict(getattr(scores, dim))
-    out["mean"] = scores.mean
-    return out
+def _entry(review: Review, profile: ReviewerProfile, score: JudgeScore) -> dict:
+    return {
+        "reviewer_id": review.reviewer_id,
+        **{d: getattr(score, d).model_dump() for d in DIMENSIONS},
+        "mean": _mean(score),
+    }
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     p = argparse.ArgumentParser(description="LLM-as-judge for reviewer feedback")
-    p.add_argument("--manuscript", required=True,
-                   help="Path to the manuscript markdown file judged against.")
-    p.add_argument("--reviews-dir", default="reviews",
-                   help="Directory containing per-reviewer JSON files (default: reviews/).")
-    p.add_argument("--output", default=None,
-                   help="Output JSON path. Defaults to evaluations/<run-id>.json.")
-    p.add_argument("--config", default="config/default.yaml",
-                   help="Path to config/default.yaml (default: config/default.yaml).")
-    p.add_argument("--axes", default="config/axes.yaml",
-                   help="Path to config/axes.yaml (default: config/axes.yaml).")
-    p.add_argument("--model", default=None,
-                   help="Override cfg.models.judge.")
+    p.add_argument("--manuscript", required=True, help="Path to manuscript markdown.")
+    p.add_argument("--run-dir", required=True,
+                   help="Path to evaluations/run-<ts>/ directory containing run.json.")
+    p.add_argument("--config", default="config/default.yaml")
+    p.add_argument("--axes", default="config/axes.yaml")
+    p.add_argument("--model", default=None, help="Override cfg.models.judge.")
     args = p.parse_args(argv)
 
     cfg = load_config(Path(args.config), Path(args.axes))
     model = args.model or cfg.models.judge
 
+    run_obj = RunOutput.model_validate_json(Path(args.run_dir, "run.json").read_text())
     manuscript = Path(args.manuscript).read_text()
-    reviews_dir = Path(args.reviews_dir)
-    review_paths = sorted(reviews_dir.glob("*.json"))
-    if not review_paths:
-        print(f"No reviews found in {reviews_dir}/", file=sys.stderr)
-        return 1
 
-    out_path = Path(args.output) if args.output else Path("evaluations") / f"{_run_id()}.json"
-
+    profiles_by_id = {p.id: p for p in run_obj.profiles.reviewers}
     llm = from_env(default_model=model)
-    per_reviewer: list[dict] = []
-    for rp in review_paths:
-        review = json.loads(rp.read_text())
-        scores = judge_review(manuscript, review, llm=llm, model=model)
-        per_reviewer.append({"reviewer_id": review.get("reviewer_id"), **_scores_to_dict(scores)})
 
+    per_reviewer: list[dict] = []
+    for review in run_obj.board.reviews:
+        profile = profiles_by_id[review.reviewer_id]
+        score = judge_review(manuscript, review, profile, llm=llm, model=model)
+        per_reviewer.append(_entry(review, profile, score))
+
+    if not per_reviewer:
+        print("No reviews to judge.", file=sys.stderr)
+        return 1
     board_mean = sum(e["mean"] for e in per_reviewer) / len(per_reviewer)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({
-        "manuscript":  str(Path(args.manuscript).resolve()),
+    out = Path(args.run_dir, "judge.json")
+    out.write_text(json.dumps({
+        "manuscript": str(Path(args.manuscript).resolve()),
         "judge_model": model,
         "per_reviewer": per_reviewer,
-        "board_mean":  board_mean,
+        "board_mean": board_mean,
     }, indent=2, ensure_ascii=False))
-    print(f"Wrote {out_path}  (board_mean={board_mean:.2f})")
+    print(f"Wrote {out}  (board_mean={board_mean:.2f})")
     return 0
 
 

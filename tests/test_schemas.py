@@ -88,3 +88,12 @@ def test_ccs_match_shape():
 def test_reviewer_tuple_id_required():
     with pytest.raises(ValidationError):
         ReviewerTuple(name="x", specialty="y", stance="z", primary_focus="p", secondary_focus=None)
+
+
+def test_judge_score_round_trip():
+    from paperfb.schemas import DimensionScore, JudgeScore
+    js = JudgeScore(**{
+        d: DimensionScore(score=4, justification="j")
+        for d in ["specificity", "actionability", "persona_fidelity", "coverage", "non_redundancy"]
+    })
+    assert JudgeScore.model_validate_json(js.model_dump_json()) == js

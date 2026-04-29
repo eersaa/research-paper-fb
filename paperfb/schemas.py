@@ -105,3 +105,21 @@ class RunOutput(BaseModel):
     classification: ClassificationResult
     profiles: ProfileBoard
     board: BoardReport
+
+
+# Judge ──────────────────────────────────────────────────────────────────────
+
+
+class DimensionScore(BaseModel):
+    model_config = ConfigDict(title="DimensionScore", extra="forbid")
+    score: int  # validated in [1, 5] post-parse
+    justification: str
+
+
+class JudgeScore(BaseModel):
+    model_config = ConfigDict(title="JudgeScore", extra="forbid")
+    specificity: DimensionScore
+    actionability: DimensionScore
+    persona_fidelity: DimensionScore
+    coverage: DimensionScore
+    non_redundancy: DimensionScore
