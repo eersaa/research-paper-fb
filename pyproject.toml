@@ -7,7 +7,7 @@ name = "research-paper-feedback"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "openai>=1.50.0",
+    "ag2[openai]==0.12.1",
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
 ]
