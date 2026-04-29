@@ -1,11 +1,14 @@
 transport: openai_chat_completions
 base_url_env: BASE_URL
+ag2:
+  cache_seed: null
+  retry_on_validation_error: 1
 models:
-  default: anthropic/claude-3.5-haiku
-  classification: anthropic/claude-3.5-haiku
-  profile_creation: anthropic/claude-3.5-haiku
-  reviewer: anthropic/claude-3.5-haiku
-  judge: openai/gpt-4.1-mini
+  default: openai/gpt-4.1-mini
+  classification: openai/gpt-4.1-mini
+  profile_creation: openai/gpt-4.1-mini
+  reviewer: openai/gpt-4.1-mini
+  judge: google/gemini-2.5-flash-lite
 reviewers:
   count: 3
   core_focuses: [methods, results, novelty]

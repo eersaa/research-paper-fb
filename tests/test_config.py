@@ -8,7 +8,7 @@ def test_load_defaults():
     assert isinstance(cfg, Config)
     assert cfg.reviewers.count == 3
     assert cfg.reviewers.core_focuses == ["methods", "results", "novelty"]
-    assert cfg.models.default == "anthropic/claude-3.5-haiku"
+    assert cfg.models.default == "openai/gpt-4.1-mini"
     stance_names = [s.name for s in cfg.axes.stances]
     focus_names = [f.name for f in cfg.axes.focuses]
     assert "neutral" in stance_names
@@ -59,3 +59,23 @@ paths: {acm_ccs: a, finnish_names: f, reviews_dir: r, output: o, logs_dir: l}
 """)
     with pytest.raises(ValueError, match="must be \\{name, description\\}"):
         load_config(default, bad_axes)
+
+
+def test_ag2_section_parsed():
+    from paperfb.config import load_config
+    from pathlib import Path
+    cfg = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
+    assert cfg.ag2.cache_seed is None
+    assert cfg.ag2.retry_on_validation_error == 1
+
+
+def test_models_pin_to_proxy_compatible_families():
+    """Per spec §5.1, every structured-output agent must run on OpenAI/Google."""
+    from paperfb.config import load_config
+    from pathlib import Path
+    cfg = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
+    for field in ("default", "classification", "profile_creation", "reviewer"):
+        m = getattr(cfg.models, field)
+        assert m.startswith("openai/") or m.startswith("google/"), \
+            f"models.{field}={m!r} not in OpenAI/Google families"
+    assert cfg.models.judge.startswith("google/"), "judge stays on Google for bias mitigation"

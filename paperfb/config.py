@@ -5,6 +5,12 @@ import yaml
 
 
 @dataclass(frozen=True)
+class Ag2Config:
+    cache_seed: int | None
+    retry_on_validation_error: int
+
+
+@dataclass(frozen=True)
 class ModelsConfig:
     default: str
     classification: str
@@ -52,6 +58,7 @@ class AxesConfig:
 class Config:
     transport: str
     base_url_env: str
+    ag2: Ag2Config
     models: ModelsConfig
     reviewers: ReviewersConfig
     classification: ClassificationConfig
@@ -90,9 +97,15 @@ def load_config(default_path: Path, axes_path: Path) -> Config:
         if f not in focus_names:
             raise ValueError(f"core focus '{f}' not in axes.focuses")
 
+    ag2_raw = d.get("ag2") or {}
+    ag2 = Ag2Config(
+        cache_seed=ag2_raw.get("cache_seed"),
+        retry_on_validation_error=int(ag2_raw.get("retry_on_validation_error", 1)),
+    )
     return Config(
         transport=d["transport"],
         base_url_env=d["base_url_env"],
+        ag2=ag2,
         models=ModelsConfig(**d["models"]),
         reviewers=ReviewersConfig(**d["reviewers"]),
         classification=ClassificationConfig(**d["classification"]),
