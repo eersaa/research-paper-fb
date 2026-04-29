@@ -1,11 +1,13 @@
 import os
 from dataclasses import replace
 from pathlib import Path
+
 import pytest
 from dotenv import load_dotenv
 
 from paperfb.config import load_config
 from paperfb.pipeline import run as pipeline_run
+from paperfb.schemas import RunOutput
 
 
 pytestmark = pytest.mark.slow
@@ -14,10 +16,10 @@ load_dotenv()
 
 
 @pytest.fixture
-def cfg_tmp(tmp_path):
-    cfg = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
-    return replace(cfg, paths=replace(
-        cfg.paths,
+def cfg(tmp_path):
+    c = load_config(Path("config/default.yaml"), Path("config/axes.yaml"))
+    return replace(c, paths=replace(
+        c.paths,
         output=str(tmp_path / "report.md"),
         logs_dir=str(tmp_path / "logs"),
     ))
@@ -28,31 +30,41 @@ def manuscript():
     return Path("tests/fixtures/tiny_manuscript.md").read_text()
 
 
-def test_live_pipeline_produces_report(cfg_tmp, manuscript, tmp_path):
+def test_live_pipeline_produces_report_and_run_json(cfg, manuscript, tmp_path):
     assert os.environ.get("BASE_URL"), "BASE_URL env var required for live test"
 
-    result = pipeline_run(manuscript=manuscript, cfg=cfg_tmp)
+    run = pipeline_run(manuscript=manuscript, cfg=cfg)
+    assert isinstance(run, RunOutput)
 
-    # (a) report exists
-    report = Path(cfg_tmp.paths.output)
-    assert report.exists(), "final_report.md missing"
+    # (a) markdown report
+    report = Path(cfg.paths.output)
+    assert report.exists()
     text = report.read_text()
+    assert text.count("## Review by ") == cfg.reviewers.count
 
-    # (b) per-reviewer sections match N
-    assert text.count("## Review by ") == cfg_tmp.reviewers.count
-
-    # (c) ACM classes present
+    # (b) ACM classes
     assert "## ACM classification" in text
-    assert len(result.classification.classes) >= 1
+    assert len(run.classification.classes) >= 1
 
-    # (d) reviewer stances distinct per (stance, primary_focus)
-    pairs = {(r.profile.stance, r.profile.primary_focus) for r in result.board.reviews}
-    assert len(pairs) == len(result.board.reviews), "stance/focus pair duplication"
+    # (c) reviewer diversity invariants — read from profiles, not from slim Review
+    successful_ids = {r.reviewer_id for r in run.board.reviews}
+    successful_profiles = [p for p in run.profiles.reviewers if p.id in successful_ids]
+    pairs = {(p.stance, p.primary_focus) for p in successful_profiles}
+    assert len(pairs) == len(successful_profiles), "stance/focus pair duplication"
+    names = {p.name for p in successful_profiles}
+    assert len(names) == len(successful_profiles), "Finnish-name duplication"
 
-    # (e) no manuscript text leaks to stdout/logs
-    #     manuscript has a unique sentinel phrase:
+    # (d) RunOutput artefact round-trips
+    eval_dirs = sorted(Path("evaluations").glob("run-*"))
+    assert eval_dirs, "no evaluations/run-* directory written"
+    run_json = eval_dirs[-1] / "run.json"
+    assert run_json.exists()
+    parsed = RunOutput.model_validate_json(run_json.read_text())
+    assert parsed == run
+
+    # (e) non-leakage: manuscript body must not appear in cleartext logs
     sentinel = "wall-clock time recorded on a"
-    logs_dir = Path(cfg_tmp.paths.logs_dir)
+    logs_dir = Path(cfg.paths.logs_dir)
     if logs_dir.exists():
         for log in logs_dir.rglob("*"):
             if log.is_file():
